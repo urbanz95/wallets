@@ -1,0 +1,82 @@
+name: Análise diária Birdeye Standard
+on:
+  schedule:
+    # UTC. Lisboa: 07:17 no inverno, 08:17 no verão. GitHub pode atrasar a execução.
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      initialize_state:
+        description: 'Primeiro arranque: criar cofre. Recusa se já existir.'
+        type: boolean
+        default: false
+      wallet:
+        description: 'Endereço público Solana opcional para análise manual; nunca um segredo'
+        type: string
+        default: ''
+      notify:
+        description: 'Permitir Telegram apenas para carteiras elegíveis e atuais'
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: wallets-durable-state
+  cancel-in-progress: false
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: urbanz95/wallets
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar
+        run: python -m pip install -e .
+      - name: Confirmar segredos indispensáveis sem os imprimir
+        env:
+          BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+        run: |
+          test -n "$STATE_ENCRYPTION_KEY" || { echo 'Falta STATE_ENCRYPTION_KEY em Actions Secrets'; exit 1; }
+          test -n "$BIRDEYE_API_KEY" || { echo 'Falta BIRDEYE_API_KEY em Actions Secrets'; exit 1; }
+      - name: Inicializar primeiro estado apenas por pedido manual
+        if: github.event_name == 'workflow_dispatch' && inputs.initialize_state
+        run: python scripts/state_vault.py init --db state/wallets.sqlite
+      - name: Restaurar e autenticar o último estado
+        id: restore
+        run: python scripts/state_vault.py restore --db state/wallets.sqlite
+      - name: Recolher e avaliar; reservar quota de forma durável antes da rede
+        env:
+          BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+          MANUAL_WALLET: ${{ inputs.wallet }}
+        shell: bash
+        run: |
+          wallet_args=()
+          if [ -n "$MANUAL_WALLET" ]; then wallet_args=(--wallet "$MANUAL_WALLET"); fi
+          python -m wallets.cli run --config config.toml --db state/wallets.sqlite --output reports \
+            --checkpoint-command "python scripts/state_vault.py save --db state/wallets.sqlite" "${wallet_args[@]}"
+      - name: Guardar análises antes de qualquer envio
+        run: python scripts/state_vault.py save --db state/wallets.sqlite
+      - name: Telegram só após nova verificação de elegibilidade
+        if: github.event_name == 'schedule' || inputs.notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: >-
+          python -m wallets.cli notify --config config.toml --db state/wallets.sqlite
+          --checkpoint-command "python scripts/state_vault.py save --db state/wallets.sqlite"
+      - name: Checkpoint final, incluindo falhas de recolha e reservas de envio
+        if: always() && steps.restore.outcome == 'success'
+        run: python scripts/state_vault.py save --db state/wallets.sqlite
+      - name: Cópia de recuperação apenas cifrada; nunca SQLite ou relatórios em claro
+        if: always() && steps.restore.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-wallets-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: state/wallets.sqlite.enc
+          if-no-files-found: error
+          retention-days: 90
