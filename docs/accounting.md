@@ -69,3 +69,10 @@ UTC; os relatórios apresentam horas locais de Europe/Lisbon. O período de
 manutenção é medido entre a aquisição de cada lote e o respetivo consumo FIFO.
 Não se calcula drawdown a partir da soma de resultados de trades: é necessária
 uma série adequada do valor da carteira e tratamento dos fluxos externos.
+
+
+## Reconciliação Birdeye e Helius
+
+A partir da versão0.2, os dados brutos Helius, os eventos Helius e os eventos Birdeye ficam separados no SQLite. A vista usada para análise escolhe a representação Helius nas assinaturas observadas em ambas as fontes, evitando duplicar posições ou resultados. Valores históricos USD só são associados se token, direção, quantidade, instante e assinatura coincidirem de forma única. Divergências tornam a interpretação indeterminada; dados desconhecidos não são preenchidos por estimativas.
+
+Os programas Pump.fun e PumpSwap são reconhecidos por endereços, discriminadores e posições de contas publicados nos IDLs oficiais, fixados num commit documentado no normalizador. O beneficiário da conta de token é identificado separadamente do pagador da taxa. Renda de contas, conversão SOL/wSOL, variantes desconhecidas e rotas múltiplas não são tratados como swaps simples sem reconciliação suficiente. Saldos de USDC/USDT não implicam automaticamente um preço histórico exato de1USD.

@@ -7,6 +7,12 @@ from enum import Enum
 import json
 
 UTC = timezone.utc
+LIVE_SOURCES = frozenset({'birdeye','helius','birdeye+helius'})
+EVALUATION_SOURCES = frozenset({'birdeye','birdeye+helius'})
+
+def allowed_event_sources(source):
+    return LIVE_SOURCES if source=='birdeye+helius' else {source}
+
 SOL = 'So11111111111111111111111111111111111111112'
 
 def utcnow():

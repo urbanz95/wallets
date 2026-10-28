@@ -2,42 +2,19 @@
 
 ## Configuração segura
 
-Os únicos segredos de utilização são `BIRDEYE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `STATE_ENCRYPTION_KEY`. No GitHub, use **Settings → Secrets and variables → Actions**. Não publique os valores em issues, commits, relatórios ou imagens. `.env.example` contém apenas nomes vazios. O programa nunca pede chaves privadas Solana.
+Segue o [guia passo a passo](configuration.md). Os cinco segredos são `BIRDEYE_API_KEY`, `HELIUS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `STATE_ENCRYPTION_KEY`. Criam-se em [Settings → Secrets and variables → Actions](https://github.com/urbanz95/wallets/settings/secrets/actions), através de **New repository secret**. Não usar **Variables** nem publicar os valores em código, issues ou relatórios. `.env.example` contém apenas nomes vazios.
 
-Para criar o bot, fale com o **@BotFather** oficial e use `/newbot`. Abra a conversa privada com o bot e envie `/start` manualmente. Para obter o seu `chat.id`, pode executar este pequeno programa no seu computador; o token é introduzido de forma oculta e não aparece na linha de comandos nem num URL publicado:
+Os auxiliares locais `scripts/telegram_chat_id.py` e `scripts/generate_state_key.py` ajudam a obter o chat e a criar a chave. O primeiro só lê `getUpdates` depois de uma mensagem manual tua; nunca envia testes. O segundo cria uma chave Fernet e recusa substituir um ficheiro existente. Ambos recusam execução em Actions para não publicar identificadores ou chaves nos logs.
 
-```python
-import getpass
-import json
-import urllib.request
-
-token = getpass.getpass('Token do BotFather: ')
-try:
-    with urllib.request.urlopen('https://api.telegram.org/bot' + token + '/getUpdates', timeout=15) as response:
-        data = json.load(response)
-except Exception:
-    raise SystemExit('Não foi possível ler as mensagens. Confirme o token e a rede; não publique o token.')
-for update in data.get('result', []):
-    chat = update.get('message', {}).get('chat', {})
-    if chat.get('type') == 'private':
-        print('Chat privado:', chat.get('id'))
-```
-
-Este pedido lê a mensagem manual; não envia qualquer mensagem de teste. Confirme que o identificador é o da sua própria conversa. Se nada aparecer, volte a enviar uma mensagem manual ao bot. O bot só envia para `TELEGRAM_CHAT_ID` e não faz broadcasts.
-
-Gere a chave do cofre localmente depois de instalar a ferramenta:
-
-```sh
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Guarde-a num gestor de palavras-passe e no secret `STATE_ENCRYPTION_KEY`. A ferramenta usa Fernet, com cifragem e autenticação. Uma chave errada, conteúdo alterado ou snapshot inválido interrompem a execução. Não rode a chave apenas no GitHub: snapshots antigos continuam a precisar da chave anterior. Uma migração de chave exige um procedimento de recuperação controlado.
+Guarda a chave do cofre num gestor de palavras-passe e no secret `STATE_ENCRYPTION_KEY`. Uma chave errada, conteúdo alterado ou snapshot inválido interrompem a execução. Não substituas a chave apenas no GitHub: snapshots antigos continuam a precisar da original. Uma migração exige recuperação controlada. A ferramenta nunca pede chaves privadas Solana.
 
 ## Primeiro arranque e execução diária
 
-Em **Actions → Análise diária Birdeye Standard → Run workflow**, marque `initialize_state` uma única vez. O cofre usa o release `wallets-state` neste mesmo repositório. Se já existir, o programa recusa voltar a inicializar, mesmo que esteja vazio ou corrompido.
+Em **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow**, marque `initialize_state` uma única vez. O cofre usa o release `wallets-state` neste mesmo repositório. Se já existir, o programa recusa voltar a inicializar, mesmo que esteja vazio ou corrompido.
 
-Em execuções seguintes, a rotina é sequencial:
+Para o primeiro teste de acesso, marca também `probe_only`, fornece um endereço público em `wallet` e mantém `notify` desmarcado. São feitas apenas duas consultas controladas, sem análises ou Telegram. Nas execuções seguintes, deixa `initialize_state` desmarcado; desmarca também `probe_only` para a análise completa.
+
+A rotina é sequencial:
 
 1. Restaurar e autenticar a geração cifrada mais recente.
 2. Reservar orçamento e guardar checkpoints antes de consultas reais.
@@ -46,7 +23,7 @@ Em execuções seguintes, a rotina é sequencial:
 5. Registar uma tentativa pendente e guardar esse estado remotamente **antes** de contactar o Telegram.
 6. Guardar o resultado conhecido do envio, ou a incerteza de entrega, e o checkpoint final.
 
-O grupo de concorrência `wallets-durable-state` impede que as execuções deste workflow alterem o mesmo estado em simultâneo. `cancel-in-progress: false` evita cancelar uma execução a meio de um envio. Não execute outra cópia do programa sobre o mesmo estado ao mesmo tempo; a cópia local deve ficar separada.
+A sondagem e a análise usam o mesmo workflow, as mesmas permissões previamente existentes e o grupo de concorrência `wallets-durable-state`, para não alterar o mesmo estado em simultâneo. `cancel-in-progress: false` evita cancelar uma execução a meio de um envio. Não execute outra cópia do programa sobre o mesmo estado ao mesmo tempo; a cópia local deve ficar separada.
 
 O `cron` é UTC, não acompanha automaticamente a mudança de hora de Lisboa. As datas guardadas são UTC; os relatórios apresentam Europe/Lisbon. O agendamento GitHub pode atrasar e pode ser desativado após inatividade do repositório público. Consulte Actions regularmente; não há mensagens Telegram de erro, ausência de resultados ou arranque.
 
@@ -81,9 +58,9 @@ Se o Telegram aceitar uma mensagem mas a ligação cair antes de responder, não
 
 ## Orçamento gratuito e dados insuficientes
 
-O cliente limita pedidos, créditos por execução, consumo mensal reservado e tentativas. Os valores iniciais são800 CU por execução e28 000 CU mensais reservados:31 reservas diárias consomem24 800 CU, mesmo se o uso real for inferior. São limites locais conservadores, não um novo plano nem créditos adicionais.  Cada repetição consome orçamento. A reserva durável antes da rede evita que uma falha do runner faça esquecer o consumo. Reservas conservadoras podem fazer parar a análise antes de esgotar efetivamente a quota da conta.
+O cliente limita pedidos, créditos por execução, consumo mensal reservado e tentativas. Birdeye e Helius têm contadores e reservas independentes, conforme `config.toml`. A configuração inicial Birdeye reserva até 800 CU por execução e 28 000 CU por mês; 31 reservas de 800 CU totalizam 24 800 CU. A Helius tem limites próprios inferiores à quota Free. São limites locais conservadores, não créditos adicionais. Cada repetição consome orçamento. A reserva durável antes da rede evita que uma falha do runner faça esquecer o consumo. Reservas conservadoras podem fazer parar a análise antes de esgotar efetivamente a quota da conta.
 
-Os limites da conta Birdeye e a acessibilidade dos endpoints podem mudar. `probe` faz poucas consultas controladas; não testa listas de endpoints pagos. Uma resposta 401, 403, 429, quota insuficiente, paginação interrompida ou resposta incompatível fica registada e bloqueia conclusões dependentes. Não há scraping, RPC ou fornecedor alternativo.
+Os limites das contas Birdeye/Helius e a acessibilidade dos endpoints podem mudar. `probe --provider both` faz uma consulta Birdeye (30 CU) e uma Helius (10 créditos), sem retentativas. Confirma apenas os pedidos efetuados; não certifica automaticamente todos os endpoints e não aprova carteiras. Uma resposta 401, 403, 429, quota insuficiente, paginação interrompida ou resposta incompatível fica registada e bloqueia conclusões dependentes. Só se usam Birdeye Standard e o RPC Helius Free explicitamente autorizado. Não há scraping, endpoints privados, serviços adicionais ou upgrades automáticos.
 
 `config.toml` identifica a versão e os limites heurísticos: amostra mínima, períodos, concentração, custo desconhecido, frequência, perdas abertas e cadência de notificações. A decisão exige as oito verificações obrigatórias; uma pontuação elevada não compensa uma reprovação ou uma indeterminação.
 

@@ -13,3 +13,5 @@ state/
 reports/
 *.enc
 *.key
+
+.local-secrets/

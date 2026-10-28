@@ -1,4 +1,4 @@
-criteria_version = "2026-10-28.1"
+criteria_version = "2026-10-28.2"
 lookback_days = 90
 max_data_age_hours = 24
 max_evaluation_age_hours = 24
@@ -40,3 +40,22 @@ min_volume_24h_usd = 100000
 min_price_change_24h_percent = 10
 max_tokens = 5
 max_wallets = 10
+
+# Complemento on-chain autorizado. Não altera os oito requisitos obrigatórios.
+[helius]
+enabled = true
+max_requests_per_run = 100
+max_credits_per_run = 5000
+monthly_credit_ceiling = 900000
+requests_per_second = 5.0
+max_retries = 2
+cache_ttl_seconds = 900
+max_pages = 5
+page_size = 100
+max_discovery_tokens = 3
+max_early_buyers = 20
+max_launch_addresses = 3
+
+# Opcional: endereços públicos de curva/pools conhecidos, por token.
+# [helius.launch_addresses]
+# ENDERECO_DO_TOKEN = ["ENDERECO_DA_CURVA_OU_POOL"]

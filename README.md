@@ -1,38 +1,50 @@
-# Carteiras Solana — análise conservadora com Birdeye Standard
+# Carteiras Solana — Birdeye Standard e Helius Free
 
-Esta ferramenta procura carteiras em tokens Solana (por defeito, da plataforma pump.fun, uma aproximação ao universo de memecoins), reúne dados permitidos pelo plano gratuito da Birdeye e aplica oito verificações obrigatórias. O Telegram recebe **apenas carteiras com todas as verificações APROVADAS e ainda atuais**. Se faltar informação, a verificação fica INDETERMINADA e não há envio. Zero carteiras aprovadas é um resultado válido.
+A ferramenta descobre candidatas em tokens Solana, reconstrói o histórico disponível e aplica oito verificações obrigatórias. O Telegram recebe **apenas carteiras com todas as verificações APROVADAS e ainda atuais**. Dados insuficientes deixam a verificação INDETERMINADA e bloqueiam o envio. Zero carteiras aprovadas é um resultado válido.
 
-O código não compra, vende, copia operações nem assina transações. Nunca precisa de seed phrases ou chaves privadas. GitHub aloja o código e o estado cifrado; Telegram apenas entrega as mensagens. Todos os dados de mercado e on-chain vêm da API pública Birdeye.
+A integração Helius Free foi autorizada em 28-10-2026 como complemento à Birdeye Standard. Birdeye fornece a seleção de tokens, medidas de mercado e dados já integrados; Helius acrescenta histórico on-chain e procura compradores iniciais observados. Não há fornecedores adicionais nem chamadas a endpoints pagos. GitHub aloja o código e o estado cifrado; Telegram entrega as mensagens. Não se compram ou vendem ativos, não se assinam transações e nunca se pedem seed phrases ou chaves privadas.
 
 ## Começar sem saber programar
 
-1. Na sua conta Birdeye, obtenha uma chave do plano **Standard gratuito**. Não ative uma experiência paga nem faça um upgrade. Consulte o [relatório de capacidades](docs/capabilities.md): vários campos necessários à aprovação continuam sem cobertura suficiente.
-2. No Telegram, abra o **@BotFather** oficial, envie `/newbot` e escolha um nome e um nome de utilizador. Guarde o token. Abra a conversa com o seu novo bot e envie `/start` **manualmente**; o programa não envia mensagens de arranque ou de teste.
-3. Obtenha o identificador numérico do seu próprio chat a partir de `getUpdates` da Bot API, depois da mensagem manual. O procedimento sem publicar o token está em [Operação e recuperação](docs/operations.md). Não envie o token para esta conversa, para issues ou para ficheiros do repositório.
-4. No GitHub, abra **urbanz95/wallets → Settings → Secrets and variables → Actions → New repository secret**. Crie estes quatro segredos:
+O [guia de configuração passo a passo](docs/configuration.md) explica como criar o bot, obter o identificador do teu chat, gerar a chave de cifragem e fazer o primeiro arranque sem Telegram.
 
-   | Nome | O que colocar |
-   | --- | --- |
-   | `BIRDEYE_API_KEY` | Chave Birdeye Standard gratuita |
-   | `TELEGRAM_BOT_TOKEN` | Token dado pelo BotFather |
-   | `TELEGRAM_CHAT_ID` | Identificador do seu chat, nunca de um chat alheio |
-   | `STATE_ENCRYPTION_KEY` | Chave Fernet; geração e cópia de segurança explicadas abaixo |
+Os cinco segredos vão para [GitHub → Settings → Secrets and variables → Actions](https://github.com/urbanz95/wallets/settings/secrets/actions), usando **New repository secret**:
 
-5. Guarde uma cópia segura da chave de cifragem fora do GitHub. Sem ela não poderá recuperar o estado. Gere-a uma única vez num terminal com Python e a biblioteca `cryptography`: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Se não usa Python, peça ajuda a alguém de confiança para executar só este comando localmente. Não use um gerador de chaves num site público.
-6. No GitHub, abra **Actions → Análise diária Birdeye Standard → Run workflow**. No primeiro arranque, marque `initialize_state`; deixe `notify` desmarcado. A ferramenta cria um cofre cifrado e executa a análise sem mensagens Telegram. Se o cofre já existir, essa opção recusa a reinicialização.
-7. Nas execuções manuais seguintes, deixe `initialize_state` desmarcado. Marque `notify` apenas se quiser permitir mensagens elegíveis. A execução diária já permite esses envios; se nenhuma carteira passar, fica em silêncio.
+| Nome | Valor |
+|---|---|
+| `BIRDEYE_API_KEY` | Chave do plano Standard gratuito da Birdeye |
+| `HELIUS_API_KEY` | Só a chave do plano Free da Helius |
+| `TELEGRAM_BOT_TOKEN` | Token dado pelo `@BotFather` oficial |
+| `TELEGRAM_CHAT_ID` | Número da tua própria conversa privada com o bot |
+| `STATE_ENCRYPTION_KEY` | Chave de cifragem criada localmente e guardada também fora do GitHub |
 
-Sem os segredos configurados, os testes, a demonstração e os relatórios de limitações continuam a funcionar, mas a análise on-chain real não é feita. A rotina diária exige os segredos antes de começar. As credenciais nunca devem ir para `config.toml`, `.env.example` ou comentários públicos.
+Não coloques estes valores nesta conversa, em **Variables**, em ficheiros ou em comentários públicos. Sem as chaves, os testes e a demonstração funcionam, mas não confirmam acesso real aos serviços.
 
-## O que recebe e onde consultar
+O primeiro arranque recomendado é **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow**: marca `initialize_state` uma única vez, marca `probe_only`, preenche `wallet` com um endereço público e deixa `notify` desmarcado. A sondagem faz poucas consultas e nunca envia Telegram. Depois, desmarca `initialize_state` e `probe_only` para recolher e analisar. Os detalhes estão no [guia de configuração](docs/configuration.md).
 
-As análises geram HTML, CSV e JSON locais. Uma carteira pode ficar APROVADA, REPROVADA ou INDETERMINADA em cada verificação. Para voltar a exportar a partir de um estado restaurado, use `python -m wallets.cli report --db state/wallets.sqlite --output reports`. Relatórios e erros ficam na consola/localmente; nenhum destes avisos é enviado ao Telegram. As execuções automáticas guardam o histórico em SQLite cifrado; os relatórios em claro não são publicados como artefactos do repositório público.
+## Descoberta e limites reais
 
-A mensagem de uma carteira elegível inclui o endereço completo, período, tokens, resultado realizado e custos identificados, resultado sem o melhor token, concentração, perdas abertas, verificações, data e links públicos. “Aprovada” significa apenas que passou os critérios nessa avaliação. Não garante rentabilidade, identidade humana nem ausência de fraude.
+A seleção inicial de tokens usa idade de listagem, liquidez, volume e valorização configuráveis. A plataforma pump.fun é a aproximação inicial ao universo de memecoins; não prova a categoria de cada ativo. Traders relevantes da Birdeye e compradores observados no histórico Helius originam candidatas, com registo dos tokens e datas da descoberta.
+
+“Primeiros compradores observados” não significa uma lista global garantida: consultar só o mint pode não cobrir todas as curvas, pools e migrações. Transações, transferências, distribuições, liquidez e falhas precisam de interpretação e cobertura adequadas. Depois da descoberta, a análise usa o histórico disponível de todos os tokens da carteira, incluindo perdas e posições abertas; não avalia apenas o token que a revelou.
+
+A Helius não torna automaticamente uma carteira aprovável. Taxas em SOL não são custos históricos em USD sem uma conversão comprovada; movimentos desconhecidos não são compras de custo zero. Inventário, execução, liquidez, coordenação e automatização insuficientemente avaliados continuam a bloquear a aprovação. Consulta os [contratos e limites Birdeye](docs/capabilities.md) e [Helius](docs/helius-capabilities.md).
+
+## O que recebes e onde consultar
+
+As análises geram HTML, CSV e JSON locais. Para voltar a exportar a partir de um estado restaurado:
+
+```sh
+python -m wallets.cli report --db state/wallets.sqlite --output reports
+```
+
+As execuções automáticas guardam o histórico em SQLite cifrado. Relatórios em claro e SQLite nunca são publicados como artefactos do repositório público. Os logs de Actions mostram estados técnicos e limitações, sem credenciais. Nenhum erro, candidata, resultado vazio ou demonstração é enviado ao Telegram.
+
+Uma mensagem elegível inclui endereço completo, rede, período, tokens, resultado realizado e tratamento de custos, resultado sem o melhor token, concentração, perdas abertas, verificações e data. “Aprovada” significa apenas que passou os critérios naquela avaliação: não garante rentabilidade, ausência de fraude ou identidade humana.
 
 ## Utilização local
 
-Precisa de Python 3.11 ou superior. Abra a pasta do repositório num terminal:
+Precisas de Python 3.11 ou superior. Na pasta do repositório:
 
 ```sh
 python -m pip install -e .
@@ -40,40 +52,38 @@ python -m unittest discover -s tests -v
 python -m wallets.cli demo --output reports
 ```
 
-A demonstração usa dados fictícios e nunca pode enviar Telegram. Abra o relatório HTML produzido na pasta `reports`.
+A demonstração usa dados fictícios, mantém-se separada do estado operacional e nunca envia Telegram. Abre o relatório HTML na pasta `reports`.
 
-Com a chave Birdeye configurada como variável de ambiente, pode verificar o acesso com poucas consultas controladas e executar a análise:
+Com as chaves configuradas como variáveis de ambiente, podes sondar ambos os serviços ou recolher dados:
 
 ```sh
-python -m wallets.cli probe --wallet ENDERECO_PUBLICO_SOLANA --config config.toml --db state/wallets.sqlite
+python -m wallets.cli probe --provider both --wallet ENDERECO_PUBLICO_SOLANA --db state/wallets.sqlite
 python -m wallets.cli run --config config.toml --db state/wallets.sqlite --output reports
 ```
 
-Para analisar endereços introduzidos manualmente, acrescente `--wallet ENDERECO_PUBLICO_SOLANA` ao comando `run`; pode repetir a opção para várias carteiras. No GitHub, o formulário **Run workflow** também tem o campo opcional `wallet`. A descoberta automática não é substituída por uma lista fixa.
-
-Use `python -m wallets.cli --help` e a ajuda de cada comando para as opções disponíveis. O modo local mantém o SQLite no seu disco. A execução GitHub usa checkpoints cifrados antes das operações que precisam de persistência durável.
+Para análise manual, acrescenta `--wallet ENDERECO_PUBLICO_SOLANA` ao comando `run`; podes repetir a opção. O modo local mantém o SQLite no teu disco; o GitHub usa checkpoints cifrados antes das operações que precisam de persistência durável. `python -m wallets.cli --help` mostra as opções.
 
 ## Como são tomadas as decisões
 
-- **Dados:** atualidade, período, paginação, truncagem, todos os tokens e falhas registadas. Ausência de histórico não é prova de ausência de operações.
-- **Contabilidade:** quantidades com `Decimal`, lotes FIFO, vendas parciais e recompras. Transferências e distribuições não têm custo zero presumido. Custos desconhecidos continuam desconhecidos. Métricas Birdeye são separadas dos cálculos próprios.
-- **Consistência:** a unidade da amostra é o endereço do token; várias operações no mesmo token não aumentam artificialmente a amostra. Semanas não sobrepostas, perdas abertas e posições com custo desconhecido contam na avaliação.
-- **Concentração:** calcula-se o resultado completo, sem os tokens da descoberta, sem o melhor e sem os três melhores. A concentração usa a soma dos resultados positivos, não o lucro total após perdas.
-- **Automatização e possibilidade de acompanhar:** combinam-se vários sinais; um único indício não exclui automaticamente. Falta de dados sobre execução, coordenação e liquidez bloqueia conclusões fortes. Usar um bot de Telegram para executar decisões próprias não basta para excluir uma carteira.
-- **Envio:** o motor volta a validar os oito requisitos e a atualidade imediatamente antes de reservar uma tentativa. A reserva é guardada de forma durável antes do pedido Telegram. Uma entrega incerta fica bloqueada para evitar repetições.
+- **Dados:** atualidade, período, paginação, truncagem, universo de tokens e falhas registadas. Uma resposta bem-sucedida não prova cobertura completa.
+- **Contabilidade:** `Decimal` e FIFO, com vendas parciais e recompras. Custos desconhecidos permanecem desconhecidos; métricas do fornecedor ficam separadas dos cálculos próprios.
+- **Consistência:** a unidade da amostra é o endereço do token. Repetir operações no mesmo token não aumenta a amostra. Semanas não sobrepostas, perdas abertas e custos desconhecidos contam.
+- **Concentração:** resultado completo, sem origens, sem o melhor e sem os três melhores. O denominador é a soma dos resultados positivos por token.
+- **Automatização e acompanhamento:** vários sinais combinados; uma etiqueta ou o uso de uma interface de trading não excluem automaticamente. Falta de cobertura bloqueia conclusões fortes.
+- **Envio:** todas as oito verificações devem passar. Critérios, evidência e atualidade são novamente verificados antes do HTTP. A tentativa é guardada remotamente antes do envio; entregas incertas não se repetem automaticamente.
 
-Os limites em [`config.toml`](config.toml) são **heurísticas conservadoras**, não parâmetros cientificamente validados nem otimizados para carteiras observadas. A versão, uma cópia dos valores efetivos e o hash dos critérios acompanham cada avaliação. A [justificação dos limites](docs/criteria.md) define todas as métricas e heurísticas. Não reduza verificações apenas para obter mensagens.
+Os limites em [`config.toml`](config.toml) são **heurísticas conservadoras**, sem otimização para fazer carteiras observadas passar. Cada fotografia guarda a versão, a configuração efetiva e o respetivo hash. A [justificação dos critérios](docs/criteria.md) define as métricas. Nenhuma pontuação compensa uma reprovação ou indeterminação.
 
-## Estado da validação e limites
+## Estado da validação
 
-| Área | O que significa nesta entrega |
-| --- | --- |
-| Implementado | Cliente limitado à Birdeye gratuita confirmada, descoberta, recolha, contabilidade, métricas, oito verificações, relatórios, notificações condicionadas e persistência cifrada |
-| Testado com fixtures/mocks | Contabilidade, perdas abertas, concentração, paginação, quotas, indícios de automatização, dados em falta, bloqueios de envio, duplicações e cifragem/recuperação |
-| Verificado com dados reais | A documentação oficial e o acesso ao repositório foram consultados. Não havia uma chave Birdeye nem credenciais Telegram no ambiente desta entrega: não foram feitas consultas on-chain autenticadas nem envios reais. O comando `probe --wallet ...` permitirá confirmar o acesso com uma consulta controlada depois da configuração |
-| Limitações gratuitas | A disponibilidade de um endpoint não garante histórico completo, custos totais, inventário inicial, execução vendável, coordenação ou rótulos suficientes. Nesta versão o recolhedor mantém explicitamente a cobertura integral, taxas e execução como não demonstradas. Configurar secrets permite recolher e analisar dados parciais; **não torna carteiras reais aprováveis**. Essas lacunas mantêm verificações INDETERMINADAS |
-| Falta configurar | Quatro segredos, primeiro arranque do cofre e confirmação de acesso da sua chave Standard; não é necessário um computador ligado depois disso |
+| Categoria | Limite prático |
+|---|---|
+| Implementado | Descoberta, recolha e reconciliação conservadora Birdeye/Helius, contabilidade, métricas, oito gates, relatórios, Telegram condicionado e persistência cifrada |
+| Testes com fixtures/mocks | Exercitam cálculos, normalização, paginação, quotas, falhas, proveniência, bloqueios Telegram e recuperação; não certificam dados reais |
+| Dados reais | A documentação oficial foi consultada; o acesso autenticado fica pendente das chaves e da sondagem. Não são enviados testes Telegram |
+| Limitações | Contratos e histórico recolhido podem ser insuficientes. Falta de dados nunca se transforma em aprovação |
+| Falta configurar | Os cinco segredos, primeiro arranque do cofre e confirmação de acesso gratuito |
 
-O [acompanhamento posterior](docs/validation.md) usa snapshots imutáveis da seleção e separa o que já era conhecido do que só ocorreu depois. Não se atribui a um seguidor o preço original de entrada de outra carteira. Não há simulador de copy trading nem promessa de execução instantânea.
+O [acompanhamento posterior](docs/validation.md) guarda observações separadas das seleções imutáveis, sem usar informação futura e sem atribuir ao seguidor o preço original da carteira. Não há simulador de copy trading.
 
-A rotina diária é às **07:17 UTC**: 07:17 em Lisboa no inverno e 08:17 no verão. Pode alterar o `cron` em [daily.yml](.github/workflows/daily.yml). O GitHub pode atrasar ou suspender agendamentos em repositórios públicos inativos; não há disponibilidade contínua garantida. O [guia de operação](docs/operations.md) explica retenção, recuperação e limites.
+A rotina diária é às **07:17 UTC**: 07:17 em Lisboa no inverno e 08:17 no verão. Podes alterar o `cron` em [daily.yml](.github/workflows/daily.yml). O GitHub pode atrasar ou suspender agendamentos em repositórios públicos inativos. O [guia de operação](docs/operations.md) explica quotas, retenção e recuperação.

@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import asdict
 from hashlib import sha256
-from .models import dumps, parse_time
+from .models import dumps, parse_time, EVALUATION_SOURCES, allowed_event_sources
 
 
 def followup(selection, subsequent_events, as_of):
@@ -23,13 +23,13 @@ def followup(selection, subsequent_events, as_of):
         if previous is not None and previous!=event:raise ValueError('Evento posterior divergente')
         observed[event.id]=event
     events=sorted(observed.values(),key=lambda e:(e.timestamp,e.id))
-    live=selection.source=='birdeye' and all(e.source=='birdeye' for e in events)
+    live=selection.source in EVALUATION_SOURCES and all(e.source in allowed_event_sources(selection.source) for e in events)
     return {
         'selection_id':selection.id,'selection_wallet':selection.wallet,
         'criteria_version':selection.criteria_version,'criteria_hash':selection.metrics.get('_criteria_hash'),
         'selection_time':selection.evaluated_at,'selection_was_eligible':selection.eligible,
         'period_start_exclusive':selection.evaluated_at,'as_of':as_of,
-        'source':'birdeye' if live else 'fixture',
+        'source':selection.source if live else 'fixture',
         'event_count':len(events),'distinct_tokens':len({e.token for e in events}),
         'transaction_count':len({e.tx_hash or e.id for e in events}),
         'events_hash':sha256(dumps([asdict(e) for e in events]).encode()).hexdigest(),

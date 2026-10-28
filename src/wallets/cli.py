@@ -14,6 +14,8 @@ import tomllib
 from .accounting import account
 from .birdeye import BirdeyeClient, BirdeyeError
 from .checks import evaluate
+from .helius import HeliusClient, HeliusError
+from .helius_collection import HeliusHistory
 from .collection import Collector, valid_address, decimal
 from .models import Coverage, Event, TokenResult, dumps, parse_time, utcnow
 from .reporting import write_reports
@@ -33,6 +35,19 @@ def load_config(path):
     for key in ('max_top1_share','max_top3_share','max_unknown_cost_fraction','max_open_loss_fraction',
                 'max_rapid_close_fraction','min_win_rate','min_profitable_week_fraction'):
         if not 0<=config[key]<=1:raise ValueError('Fração de configuração fora de 0..1')
+    helius=config.get('helius',{})
+    if not isinstance(helius,dict) or not isinstance(helius.get('enabled',False),bool):raise ValueError('Ativação Helius inválida')
+    if helius.get('enabled',False):
+        from .helius import validate_config
+        validate_config(helius)
+        for name in ('max_pages','page_size','max_discovery_tokens','max_early_buyers','max_launch_addresses'):
+            value=helius.get(name,1)
+            if isinstance(value,bool) or not isinstance(value,int) or value<=0:raise ValueError('Limite Helius inválido')
+        if helius.get('page_size',100)>1000:raise ValueError('Página Helius excede contrato')
+        launch=helius.get('launch_addresses',{})
+        if not isinstance(launch,dict):raise ValueError('Lista de endereços Helius inválida')
+        for token,addresses in launch.items():
+            if not valid_address(token) or not isinstance(addresses,list) or any(not valid_address(address) for address in addresses):raise ValueError('Endereço público de lançamento inválido')
     return config
 
 
@@ -69,7 +84,8 @@ def current_marks(provider, end):
 
 def reevaluate(saved,store,config,now=None):
     now=now or utcnow()
-    events=store.get_events(saved.wallet,saved.coverage.start,saved.coverage.end)
+    reader=store.get_analysis_events if saved.source=='birdeye+helius' else store.get_events
+    events=reader(saved.wallet,saved.coverage.start,saved.coverage.end)
     provider=saved.metrics.get('provider_metrics',{})
     coverage=replace(saved.coverage,failures=list(saved.coverage.failures))
     # A atualização do relógio de avaliação não torna os dados mais recentes.
@@ -94,7 +110,15 @@ def run(args, config):
     with process_lock(args.db), Store(args.db) as store:
         now=utcnow();start=now-timedelta(days=config['lookback_days'])
         key=os.environ.get('BIRDEYE_API_KEY')
-        notes=[];discovered=[];collector=None
+        notes=[];discovered=[];collector=None;helius_history=None;helius_client=None
+        settings=config.get('helius',{})
+        helius_key=os.environ.get('HELIUS_API_KEY') if settings.get('enabled',False) else None
+        if helius_key:
+            helius_client=HeliusClient(helius_key,store,settings)
+            if args.checkpoint_command and not store.prepay_run(now.strftime('%Y-%m'),settings['max_credits_per_run'],settings['monthly_credit_ceiling'],checkpoint,namespace='helius'):
+                notes.append('Limite mensal Helius atingido: recolha adiada.');helius_key=None
+            if helius_key:helius_history=HeliusHistory(helius_client,store,config)
+        elif settings.get('enabled',False):notes.append('HELIUS_API_KEY não configurada: histórico adicional e compras iniciais observadas indisponíveis.')
         if key:
             client=BirdeyeClient(key,store,config['api']);collector=Collector(client,store,config)
             if args.checkpoint_command:
@@ -104,12 +128,25 @@ def run(args, config):
                     key=None
             if key:
                 try:discovered=collector.discover(now)
-                except BirdeyeError as exc:notes.append(str(exc))
+                except (BirdeyeError,HeliusError) as exc:notes.append(str(exc))
                 notes.extend(collector.limitations)
         if not key:notes.append('Sem consultas nesta execução: chave ausente ou orçamento indisponível. Verificações ficam indeterminadas.')
+        early=[]
+        if helius_history:
+            selected=list(getattr(collector,'selected_tokens',[])) if collector else []
+            tokens=list(dict.fromkeys(getattr(args,'token',[])+selected))[:settings.get('max_discovery_tokens',3)]
+            for token in tokens:
+                addresses=settings.get('launch_addresses',{}).get(token,[])
+                try:
+                    found=helius_history.discover_first_observed(token,now,addresses=addresses)
+                    early.extend(found.get('wallets',[]))
+                    notes.append(f'Helius: {len(found.get("wallets",[]))} carteiras com compras iniciais observadas para {token}; cobertura global não demonstrada.')
+                    if found.get('failures'):notes.append('Descoberta Helius parcial: consultar evidências guardadas.')
+                except (HeliusError,ValueError,TypeError):notes.append('Descoberta Helius indisponível ou incompleta nesta execução.')
         # Primeiro pedidos manuais; restantes candidatos rodam por avaliação mais antiga.
+
         history={e.wallet:e for e in store.latest_evaluations()}
-        automatic=list(dict.fromkeys(discovered+store.wallets()))
+        automatic=list(dict.fromkeys(early+discovered+store.wallets()))
         automatic.sort(key=lambda address:history[address].evaluated_at.isoformat() if address in history else '')
         candidates=list(dict.fromkeys(args.wallet+automatic))[:config['discovery']['max_wallets']]
         for wallet in candidates:
@@ -120,6 +157,11 @@ def run(args, config):
                 except (BirdeyeError,ValueError,TypeError):
                     coverage.failures.append('Recolha/validação incompleta; não reutilizar aprovação anterior.')
             else:coverage.failures.append('Não foi possível atualizar os dados Birdeye.')
+            if helius_history:
+                from .pipeline import augment_with_helius
+                events,coverage,provider=augment_with_helius(wallet,start,now,events,coverage,provider,helius_history,store)
+            elif settings.get('enabled',False):
+                coverage.failures.append('Histórico Helius não atualizado; não assumir ausência de atividade adicional.')
             try:results=account(events,coverage,current_marks(provider,now))
             except (ValueError,ArithmeticError):
                 coverage.complete=False;coverage.failures.append('Contabilidade incoerente; requer dados verificáveis.')
@@ -127,7 +169,8 @@ def run(args, config):
             evaluation=evaluate(wallet,events,coverage,results,store.discovery_tokens(wallet),config,utcnow(),provider)
             store.save_evaluation(evaluation)
         notes.append('Limites gratuitos ou falta de cobertura nunca autorizam aprovação por omissão.')
-        if collector:notes.append(f'Pedidos nesta execução: {collector.client.requests}; CU reservados por pedido: {collector.client.credits}.')
+        if collector:notes.append(f'Pedidos Birdeye nesta execução: {collector.client.requests}; CU reservados por pedido: {collector.client.credits}.')
+        if helius_client:notes.append(f'Pedidos Helius nesta execução: {helius_client.requests}; créditos máximos reservados: {helius_client.credits}.')
         path=write_reports(store.latest_evaluations(),args.output,notes=notes,discoveries=store.discoveries())
         checkpoint()
         print(f'Relatório local: {path}. Carteiras avaliadas nesta execução: {len(candidates)}.')
@@ -158,38 +201,55 @@ def demo(args,config):
 
 
 def probe(args,config):
-    if not os.environ.get('BIRDEYE_API_KEY'):
-        print('BIRDEYE_API_KEY não configurada. Nenhum pedido efetuado.');return 0
+    providers=('birdeye','helius') if args.provider=='both' else (args.provider,)
+    available={name:os.environ.get('BIRDEYE_API_KEY' if name=='birdeye' else 'HELIUS_API_KEY') for name in providers}
+    if not any(available.values()):
+        print('Chaves solicitadas não configuradas. Nenhum pedido efetuado.');return 0
     if not args.wallet:raise ValueError('probe exige --wallet com endereço público a consultar')
     checkpoint=checkpoint_for(args)
     with process_lock(args.db),Store(args.db) as store:
-        api=dict(config['api'],max_requests_per_run=1,max_retries=0,max_credits_per_run=30)
-        if args.checkpoint_command and not store.prepay_run(utcnow().strftime('%Y-%m'),30,api['monthly_credit_ceiling'],checkpoint):
-            raise ValueError('Quota mensal local insuficiente')
-        client=BirdeyeClient(os.environ['BIRDEYE_API_KEY'],store,api)
-        try:
-            client.request('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity','limit':1,'offset':0},cache=False)
-            print('Acesso confirmado ao endpoint gratuito de posições: 1 pedido, 30 CU. Isto não comprova os restantes endpoints nem aprova a carteira.')
-        finally:checkpoint()
+        for name in providers:
+            if not available[name]:
+                print(f'Chave {name} não configurada; acesso não verificado.');continue
+            if name=='birdeye':
+                api=dict(config['api'],max_requests_per_run=1,max_retries=0,max_credits_per_run=30)
+                cost=30
+            else:
+                api=dict(config.get('helius',{}),max_requests_per_run=1,max_retries=0,max_credits_per_run=10)
+                cost=10
+            if args.checkpoint_command and not store.prepay_run(utcnow().strftime('%Y-%m'),cost,api['monthly_credit_ceiling'],checkpoint,namespace=name):
+                raise ValueError('Quota mensal local insuficiente')
+            try:
+                if name=='birdeye':
+                    client=BirdeyeClient(available[name],store,api)
+                    client.request('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity','limit':1,'offset':0},cache=False)
+                    print('Acesso confirmado ao endpoint gratuito Birdeye de posições: 1 pedido, 30 CU. Não comprova os restantes endpoints nem aprova a carteira.')
+                else:
+                    client=HeliusClient(available[name],store,api)
+                    client.request('getTransactionsForAddress',[args.wallet,{'transactionDetails':'signatures','limit':1,'sortOrder':'asc','commitment':'finalized'}],cache=False)
+                    print('Acesso confirmado ao histórico Helius: 1 pedido, máximo 10 créditos. Não confirma cobertura integral nem aprova a carteira.')
+            finally:checkpoint()
     return 0
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Carteiras Solana: Birdeye Standard, verificações obrigatórias e Telegram condicionado.')
+    parser=argparse.ArgumentParser(description='Carteiras Solana: Birdeye Standard e Helius Free, verificações obrigatórias e Telegram condicionado.')
     sub=parser.add_subparsers(dest='command',required=True)
     for name in ('run','notify','demo','probe','report','followup'):
         p=sub.add_parser(name)
         p.add_argument('--config',default='config.toml');p.add_argument('--db',default='state/wallets.sqlite')
         p.add_argument('--output',default='reports');p.add_argument('--checkpoint-command')
         if name=='run':
-            p.add_argument('--wallet',action='append',default=[]);p.add_argument('--notify',action='store_true')
-        if name=='probe':p.add_argument('--wallet')
+            p.add_argument('--wallet',action='append',default=[]);p.add_argument('--token',action='append',default=[]);p.add_argument('--notify',action='store_true')
+        if name=='probe':
+            p.add_argument('--wallet');p.add_argument('--provider',choices=('birdeye','helius','both'),default='birdeye')
         if name=='followup':
             p.add_argument('--selection',required=True);p.add_argument('--as-of')
     args=parser.parse_args(argv)
     try:
         config=load_config(args.config)
-        addresses=args.wallet if hasattr(args,'wallet') and isinstance(args.wallet,list) else ([args.wallet] if hasattr(args,'wallet') and args.wallet else [])
+        addresses=list(args.wallet) if hasattr(args,'wallet') and isinstance(args.wallet,list) else ([args.wallet] if hasattr(args,'wallet') and args.wallet else [])
+        addresses+=getattr(args,'token',[])
         if any(not valid_address(address) for address in addresses):raise ValueError('Endereço público Solana inválido')
         if args.command=='run':return run(args,config)
         if args.command=='demo':return demo(args,config)
@@ -201,7 +261,7 @@ def main(argv=None):
                 if not selection:raise ValueError('Fotografia desconhecida')
                 as_of=parse_time(args.as_of) if args.as_of else utcnow()
                 if as_of>utcnow():raise ValueError('Observação futura recusada')
-                events=[e for e in store.get_events(selection.wallet,selection.evaluated_at,as_of) if e.timestamp>selection.evaluated_at]
+                events=[e for e in (store.get_analysis_events if selection.source=='birdeye+helius' else store.get_events)(selection.wallet,selection.evaluated_at,as_of) if e.timestamp>selection.evaluated_at]
                 observation=followup(selection,events,as_of)
                 observation_id=store.save_followup(observation)
                 output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
@@ -211,7 +271,7 @@ def main(argv=None):
             elif args.command=='notify':notify_from_store(store,config,checkpoint_for(args))
             else:print(write_reports(store.latest_evaluations(),args.output,discoveries=store.discoveries()))
         return 0
-    except BirdeyeError as exc:
+    except (BirdeyeError,HeliusError) as exc:
         print(str(exc),file=sys.stderr);return 2
     except (ValueError,TypeError,OSError,ArithmeticError,subprocess.SubprocessError,KeyError,sqlite3.DatabaseError):
         print('Operação interrompida por configuração, integridade ou persistência inválida. Nenhuma aprovação foi concedida por omissão.',file=sys.stderr)

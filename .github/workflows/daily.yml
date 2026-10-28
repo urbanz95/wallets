@@ -1,4 +1,4 @@
-name: Análise diária Birdeye Standard
+name: Análise diária Birdeye e Helius gratuitas
 on:
   schedule:
     # UTC. Lisboa: 07:17 no inverno, 08:17 no verão. GitHub pode atrasar a execução.
@@ -7,6 +7,10 @@ on:
     inputs:
       initialize_state:
         description: 'Primeiro arranque: criar cofre. Recusa se já existir.'
+        type: boolean
+        default: false
+      probe_only:
+        description: 'Só confirmar acesso gratuito com consultas mínimas; não analisar nem enviar Telegram'
         type: boolean
         default: false
       wallet:
@@ -40,18 +44,34 @@ jobs:
       - name: Confirmar segredos indispensáveis sem os imprimir
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: |
           test -n "$STATE_ENCRYPTION_KEY" || { echo 'Falta STATE_ENCRYPTION_KEY em Actions Secrets'; exit 1; }
           test -n "$BIRDEYE_API_KEY" || { echo 'Falta BIRDEYE_API_KEY em Actions Secrets'; exit 1; }
+          test -n "$HELIUS_API_KEY" || { echo 'Falta HELIUS_API_KEY em Actions Secrets'; exit 1; }
       - name: Inicializar primeiro estado apenas por pedido manual
         if: github.event_name == 'workflow_dispatch' && inputs.initialize_state
         run: python scripts/state_vault.py init --db state/wallets.sqlite
       - name: Restaurar e autenticar o último estado
         id: restore
         run: python scripts/state_vault.py restore --db state/wallets.sqlite
-      - name: Recolher e avaliar; reservar quota de forma durável antes da rede
+      - name: Confirmar acesso gratuito com consultas mínimas e sem Telegram
+        if: github.event_name == 'workflow_dispatch' && inputs.probe_only
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          PROBE_WALLET: ${{ inputs.wallet }}
+        shell: bash
+        run: |
+          test -n "$PROBE_WALLET" || { echo 'A sondagem exige o campo wallet com um endereço público Solana'; exit 1; }
+          python -m wallets.cli probe --provider both --wallet "$PROBE_WALLET" \
+            --config config.toml --db state/wallets.sqlite \
+            --checkpoint-command "python scripts/state_vault.py save --db state/wallets.sqlite"
+      - name: Recolher e avaliar; reservar quota de forma durável antes da rede
+        if: github.event_name != 'workflow_dispatch' || !inputs.probe_only
+        env:
+          BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           MANUAL_WALLET: ${{ inputs.wallet }}
         shell: bash
         run: |
@@ -62,7 +82,7 @@ jobs:
       - name: Guardar análises antes de qualquer envio
         run: python scripts/state_vault.py save --db state/wallets.sqlite
       - name: Telegram só após nova verificação de elegibilidade
-        if: github.event_name == 'schedule' || inputs.notify
+        if: (github.event_name == 'schedule' || inputs.notify) && !inputs.probe_only
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

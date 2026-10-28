@@ -1,6 +1,8 @@
 # Capacidades reais da Birdeye gratuita
 
-Verificação documental: **28 de outubro de 2026**. Rede deste projeto: **Solana**. Fonte única de dados on-chain e de mercado: **API pública Birdeye**, autenticada com `X-API-KEY` e `x-chain: solana`. Ler documentação pública não significa recolher dados por scraping. Não se usam páginas de trading como API, RPCs, endpoints privados, x402 ou planos pagos.
+Este documento descreve o componente Birdeye. Em28-10-2026 o utilizador autorizou acrescentar Helius Free como complemento on-chain. A política atual permite apenas estes dois fornecedores gratuitos; consultar [capacidades Helius](helius-capabilities.md). Não há outros RPCs ou serviços de dados.
+
+Verificação documental: **28 de outubro de 2026**. Rede deste projeto: **Solana**. Fonte deste componente: **API pública Birdeye**, autenticada com `X-API-KEY` e `x-chain: solana`. Ler documentação pública não significa recolher dados por scraping. Não se usam páginas de trading como API, RPCs, endpoints privados, x402 ou planos pagos.
 
 ## Resultado da pesquisa
 
@@ -128,7 +130,7 @@ Os custos acima foram cruzados com a [tabela oficial de CU](https://data.birdeye
 
 ## Consequência para o Telegram
 
-Na integração atual, o recolhedor nunca declara cobertura integral, inventário inicial, taxas totais ou execução/coordenação/etiquetas suficientes: estes factos não foram demonstrados pelo conjunto de endpoints integrado. Por isso **nenhuma carteira real pode ser aprovada nesta versão**, mesmo com secrets configurados e respostas HTTP bem-sucedidas. A descoberta e os relatórios parciais continuam funcionais. Flags de cobertura não são opções de configuração para ultrapassar estas lacunas; exigiriam nova evidência auditável e implementação verificada.
+Na integração Birdeye, o recolhedor nunca declara cobertura integral, inventário inicial, taxas totais ou execução/coordenação/etiquetas suficientes: estes factos não foram demonstrados pelo conjunto de endpoints integrado. Essas lacunas bloqueiam a aprovação. O complemento Helius acrescenta histórico, evidência de compras e taxas nativas, mas não prova por si só custos totais USD, inventário inicial, liquidez de saída ou automatização adequada. A configuração de secrets e respostas HTTP bem-sucedidas não substituem essas verificações. A descoberta e os relatórios parciais continuam funcionais. Flags de cobertura não são opções de configuração para ultrapassar estas lacunas; exigiriam nova evidência auditável e implementação verificada.
 
 Cada verificação obrigatória permanece obrigatória. Sempre que o conjunto gratuito efetivamente recolhido não sustenta taxas, custo, inventário, risco de automatização ou possibilidade de acompanhar com cobertura suficiente, o estado é **INDETERMINADA**. Zero carteiras aprovadas é um resultado válido. Não se enviam candidatas, erros ou explicações de limitações pelo Telegram.
 

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wallets-solana-audit"
-version = "0.1.0"
-description = "Análise conservadora de carteiras Solana, apenas Birdeye Standard"
+version = "0.2.0"
+description = "Análise conservadora de carteiras Solana com Birdeye Standard e Helius Free"
 requires-python = ">=3.11"
 dependencies = ["cryptography==46.0.3"]
 

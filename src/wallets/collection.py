@@ -111,6 +111,7 @@ class Collector:
     def __init__(self, client, store, config, *, clock=utcnow):
         self.client, self.store, self.config, self.clock = client, store, config, clock
         self.limitations = []
+        self.selected_tokens = []
 
     @property
     def max_pages(self):
@@ -160,6 +161,8 @@ class Collector:
                 if not meets:
                     continue
                 seen_tokens.add(address)
+                self.selected_tokens.append(address)
+                self.store.record_token_selection(address,now,token)
                 for trader_page in range(self.max_pages):
                     rows, trader_meta = self._items(self.client.request(
                         'GET', '/defi/v2/tokens/top_traders', {

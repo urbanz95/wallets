@@ -8,7 +8,7 @@ from decimal import Decimal
 from hashlib import sha256
 from statistics import median
 from .analysis import metrics, SETTLEMENT_TOKENS
-from .models import Check, Evaluation, REQUIRED_CHECKS, Status, UTC, dumps, iso, utcnow
+from .models import Check, Evaluation, REQUIRED_CHECKS, Status, UTC, dumps, iso, utcnow, allowed_event_sources
 
 
 def _decimal(config, key):
@@ -54,7 +54,7 @@ def evaluate(wallet, events, coverage, token_results, discovery_tokens, config, 
     before = any(event.timestamp < coverage.start for event in events)
     mixed_wallets = any(event.wallet != wallet for event in events)
     duplicate_ids = len({event.id for event in events}) != len(events)
-    mixed_sources = any(event.source != coverage.source for event in events)
+    mixed_sources = any(event.source not in allowed_event_sources(coverage.source) for event in events)
     data_ok = (coverage.complete and not coverage.truncated and coverage.all_tokens
                and not coverage.failures and 0 <= age <= config['max_data_age_hours']
                and 0 <= end_age <= config['max_data_age_hours']

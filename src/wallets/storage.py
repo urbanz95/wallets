@@ -15,9 +15,14 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS events(wallet TEXT NOT NULL,id TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(wallet,id));
 CREATE TABLE IF NOT EXISTS discoveries(wallet TEXT NOT NULL,token TEXT NOT NULL,at TEXT NOT NULL,PRIMARY KEY(wallet,token));
 CREATE TABLE IF NOT EXISTS discovery_evidence(wallet TEXT NOT NULL,token TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(wallet,token,at));
+CREATE TABLE IF NOT EXISTS discovery_observations(id TEXT PRIMARY KEY,wallet TEXT NOT NULL,token TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS token_selections(id TEXT PRIMARY KEY,token TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cursors(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY,expires TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS budgets(month TEXT PRIMARY KEY,credits INTEGER NOT NULL CHECK(credits>=0));
+CREATE TABLE IF NOT EXISTS provider_budgets(namespace TEXT NOT NULL,month TEXT NOT NULL,credits INTEGER NOT NULL CHECK(credits>=0),PRIMARY KEY(namespace,month));
+CREATE TABLE IF NOT EXISTS source_transactions(source TEXT NOT NULL,address TEXT NOT NULL,signature TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,address,signature));
+CREATE TABLE IF NOT EXISTS source_events(source TEXT NOT NULL,wallet TEXT NOT NULL,id TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,wallet,id));
 CREATE TABLE IF NOT EXISTS evaluations(id TEXT PRIMARY KEY,wallet TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS followups(id TEXT PRIMARY KEY,selection_id TEXT NOT NULL REFERENCES evaluations(id),payload TEXT NOT NULL);
 CREATE TRIGGER IF NOT EXISTS immutable_followup_update BEFORE UPDATE ON followups BEGIN SELECT RAISE(ABORT,'immutable followup'); END;
@@ -38,7 +43,13 @@ class Store:
         if version not in (0,1):
             raise ValueError('Versão de estado não suportada')
         self.db.executescript(SCHEMA)
+        # Migração aditiva: preservar origens já registadas sem perder observações simultâneas.
+        with self.db:
+            for wallet,token,at,payload in self.db.execute('SELECT wallet,token,at,payload FROM discovery_evidence').fetchall():
+                identity=hashlib.sha256(dumps([wallet,token,at,payload]).encode()).hexdigest()
+                self.db.execute('INSERT OR IGNORE INTO discovery_observations VALUES(?,?,?,?,?)',(identity,wallet,token,at,payload))
         self.prepaid = None
+        self._provider_prepaid = {}
 
     def close(self): self.db.close()
     def __enter__(self): return self
@@ -72,9 +83,12 @@ class Store:
         with self.db:
             self.db.execute('INSERT OR IGNORE INTO discoveries VALUES(?,?,?)',(wallet,token,iso(when)))
             if evidence is not None:
-                self.db.execute('INSERT OR IGNORE INTO discovery_evidence VALUES(?,?,?,?)',(wallet,token,iso(when),dumps(evidence)))
+                encoded=dumps(evidence);at=iso(when)
+                self.db.execute('INSERT OR IGNORE INTO discovery_evidence VALUES(?,?,?,?)',(wallet,token,at,encoded))
+                identity=hashlib.sha256(dumps([wallet,token,at,encoded]).encode()).hexdigest()
+                self.db.execute('INSERT OR IGNORE INTO discovery_observations VALUES(?,?,?,?,?)',(identity,wallet,token,at,encoded))
     def discovery_evidence(self,wallet,before=None):
-        rows=self.db.execute('SELECT token,at,payload FROM discovery_evidence WHERE wallet=? ORDER BY at',(wallet,))
+        rows=self.db.execute('SELECT token,at,payload FROM discovery_observations WHERE wallet=? ORDER BY at,id',(wallet,))
         return [dict(token=row[0],observed_at=row[1],evidence=json.loads(row[2])) for row in rows if before is None or parse_time(row[1])<=before]
     def discovery_tokens(self,wallet):
         return [r[0] for r in self.db.execute('SELECT token FROM discoveries WHERE wallet=? ORDER BY token',(wallet,))]
@@ -91,25 +105,75 @@ class Store:
         return json.loads(row[0]) if row and parse_time(row[1])>now else None
     def cache_put(self,key,value,expires_at):
         with self.db:self.db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)',(key,iso(expires_at),dumps(value)))
-    def reserve_budget(self,month,cost,ceiling):
-        if cost<0:raise ValueError('Crédito inválido')
-        if self.prepaid is not None:
-            if self.prepaid['month']!=month or cost>self.prepaid['remaining']:return False
-            self.prepaid['remaining']-=cost
+    def reserve_budget(self,month,cost,ceiling,namespace='birdeye'):
+        if namespace not in ('birdeye','helius'):raise ValueError('Fornecedor não permitido')
+        if isinstance(cost,bool) or not isinstance(cost,int) or cost<0:raise ValueError('Crédito inválido')
+        prepaid=self.prepaid if namespace=='birdeye' else self._provider_prepaid.get(namespace)
+        if prepaid is not None:
+            if prepaid['month']!=month or cost>prepaid['remaining']:return False
+            prepaid['remaining']-=cost
             return True
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row=self.db.execute('SELECT credits FROM budgets WHERE month=?',(month,)).fetchone()
+            if namespace=='birdeye':
+                row=self.db.execute('SELECT credits FROM budgets WHERE month=?',(month,)).fetchone()
+            else:
+                row=self.db.execute('SELECT credits FROM provider_budgets WHERE namespace=? AND month=?',(namespace,month)).fetchone()
             used=row[0] if row else 0
             if used+cost>ceiling:return False
-            self.db.execute('INSERT OR REPLACE INTO budgets VALUES(?,?)',(month,used+cost))
+            if namespace=='birdeye':self.db.execute('INSERT OR REPLACE INTO budgets VALUES(?,?)',(month,used+cost))
+            else:self.db.execute('INSERT OR REPLACE INTO provider_budgets VALUES(?,?,?)',(namespace,month,used+cost))
         return True
-    def prepay_run(self,month,credits,ceiling,checkpoint):
-        if self.prepaid is not None:raise ValueError('Reserva já existente')
-        if not self.reserve_budget(month,credits,ceiling):return False
-        checkpoint()  # reserva durável ANTES de qualquer pedido, conservada mesmo após crash
-        self.prepaid={'month':month,'remaining':credits}
+    def prepay_run(self,month,credits,ceiling,checkpoint,namespace='birdeye'):
+        existing=self.prepaid if namespace=='birdeye' else self._provider_prepaid.get(namespace)
+        if existing is not None:raise ValueError('Reserva já existente')
+        if not self.reserve_budget(month,credits,ceiling,namespace):return False
+        checkpoint()  # reserva durável ANTES de qualquer pedido, sem devolução após crash
+        reservation={'month':month,'remaining':credits}
+        if namespace=='birdeye':self.prepaid=reservation
+        else:self._provider_prepaid[namespace]=reservation
         return True
+
+    def record_token_selection(self,token,at,evidence):
+        payload=dumps(evidence);identity=hashlib.sha256(dumps([token,iso(at),payload]).encode()).hexdigest()
+        with self.db:self.db.execute('INSERT OR IGNORE INTO token_selections VALUES(?,?,?,?)',(identity,token,iso(at),payload))
+    def discovered_tokens(self):
+        return [r[0] for r in self.db.execute('SELECT DISTINCT token FROM discoveries ORDER BY token')]
+
+    def put_source_transactions(self,source,address,rows):
+        if source!='helius':raise ValueError('Origem bruta não permitida')
+        with self.db:
+            for row in rows:
+                signatures=(row.get('transaction') or {}).get('signatures')
+                signature=signatures[0] if isinstance(signatures,list) and signatures else row.get('signature')
+                if not isinstance(signature,str) or not signature:raise ValueError('Transação sem assinatura')
+                at=iso(parse_time(row.get('blockTime')))
+                payload=dumps(row)
+                old=self.db.execute('SELECT payload FROM source_transactions WHERE source=? AND address=? AND signature=?',(source,address,signature)).fetchone()
+                if old and old[0]!=payload:raise ValueError('Transação de origem divergente')
+                self.db.execute('INSERT OR IGNORE INTO source_transactions VALUES(?,?,?,?,?)',(source,address,signature,at,payload))
+    def get_source_transactions(self,source,address,start,end):
+        return [json.loads(r[0]) for r in self.db.execute('SELECT payload FROM source_transactions WHERE source=? AND address=? AND at>=? AND at<=? ORDER BY at,signature',(source,address,iso(start),iso(end)))]
+    def put_source_events(self,source,events):
+        if source!='helius':raise ValueError('Origem de eventos não permitida')
+        with self.db:
+            for event in events:
+                if event.source!=source:raise ValueError('Origem de evento incoerente')
+                payload=dumps(asdict(event))
+                old=self.db.execute('SELECT payload FROM source_events WHERE source=? AND wallet=? AND id=?',(source,event.wallet,event.id)).fetchone()
+                if old and old[0]!=payload:raise ValueError('Evento de origem divergente')
+                self.db.execute('INSERT OR IGNORE INTO source_events VALUES(?,?,?,?,?)',(source,event.wallet,event.id,iso(event.timestamp),payload))
+    def get_source_events(self,source,wallet,start,end):
+        result=[]
+        for row in self.db.execute('SELECT payload FROM source_events WHERE source=? AND wallet=? AND at>=? AND at<=? ORDER BY at,id',(source,wallet,iso(start),iso(end))):
+            p=json.loads(row[0]);p['timestamp']=parse_time(p['timestamp'])
+            for key in ('quantity','usd_value','fee_usd'):
+                if p[key] is not None:p[key]=Decimal(p[key])
+            result.append(Event(**p))
+        return result
+    def get_analysis_events(self,wallet,start,end):
+        from .reconciliation import reconcile
+        return reconcile(self.get_events(wallet,start,end),self.get_source_events('helius',wallet,start,end))[0]
 
     def save_evaluation(self,evaluation):
         payload=evaluation.to_dict();payload['id']=''

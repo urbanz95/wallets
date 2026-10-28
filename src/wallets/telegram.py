@@ -8,7 +8,7 @@ from html import escape
 import json
 import urllib.request
 from zoneinfo import ZoneInfo
-from .models import REQUIRED_CHECKS, Status, utcnow, dumps
+from .models import REQUIRED_CHECKS, Status, utcnow, dumps, EVALUATION_SOURCES
 
 LISBON=ZoneInfo('Europe/Lisbon')
 
@@ -24,7 +24,8 @@ def eligible_for_delivery(evaluation, config, now=None):
     if not valid_address(evaluation.wallet):return False
     if evaluation.metrics.get('_criteria_hash')!=sha256(dumps(config).encode()).hexdigest():return False
     if dumps(evaluation.metrics.get('_criteria_config'))!=dumps(config):return False
-    if evaluation.source!='birdeye' or evaluation.coverage.source!='birdeye':return False
+    if evaluation.source not in EVALUATION_SOURCES or evaluation.coverage.source!=evaluation.source:return False
+    if evaluation.source=='birdeye+helius' and not config.get('helius',{}).get('enabled',False):return False
     if evaluation.criteria_version!=config['criteria_version']:return False
     coverage=evaluation.coverage
     if not (coverage.start<coverage.end<=coverage.fetched_at<=evaluation.evaluated_at<=now):return False
@@ -92,7 +93,8 @@ class Notifier:
         self.checkpoint=checkpoint;self.transport=transport;self.clock=clock;self.attempts=0
 
     def _events_current(self,evaluation):
-        events=self.store.get_events(evaluation.wallet,evaluation.coverage.start,evaluation.coverage.end)
+        reader=self.store.get_analysis_events if evaluation.source=='birdeye+helius' else self.store.get_events
+        events=reader(evaluation.wallet,evaluation.coverage.start,evaluation.coverage.end)
         evidence=dumps([asdict(e) for e in sorted(events,key=lambda e:(e.timestamp,e.id))])
         return evaluation.metrics.get('_events_hash')==sha256(evidence.encode()).hexdigest()
 

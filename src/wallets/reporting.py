@@ -3,7 +3,7 @@ from csv import DictWriter
 from html import escape
 import json
 from pathlib import Path
-from .models import dumps
+from .models import dumps, EVALUATION_SOURCES
 from .telegram import local_time, format_message
 
 def write_reports(evaluations, output, *, notes=(), discoveries=()):
@@ -22,14 +22,14 @@ def write_reports(evaluations, output, *, notes=(), discoveries=()):
                 without_best=m.get('without_best'),top1_share=m.get('top1_share'),top3_share=m.get('top3_share')))
     parts=['<!doctype html><html lang="pt-PT"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
         '<title>Análise de carteiras Solana</title><style>body{font:16px system-ui;margin:2rem auto;padding:0 1rem;max-width:1100px;color:#172537;background:#f7f9fc}article{padding:1.3rem;background:white;margin:1.5rem 0;border:1px solid #cdd5df;border-radius:8px}td,th{text-align:left;padding:.6rem;border-bottom:1px solid #ddd;vertical-align:top}table{width:100%;border-collapse:collapse}code,pre{overflow-wrap:anywhere;white-space:pre-wrap}summary{cursor:pointer}h1{font-size:1.8rem}li{margin:.5rem 0}</style>',
-        '<h1>Análise de carteiras Solana</h1><p>Fonte on-chain e de mercado: exclusivamente Birdeye Standard. Datas apresentadas em Europe/Lisbon; dados guardados em UTC.</p>',
+        '<h1>Análise de carteiras Solana</h1><p>Fontes autorizadas: Birdeye Standard (mercado e dados on-chain) e Helius Free (histórico on-chain). Datas apresentadas em Europe/Lisbon; dados guardados em UTC.</p>',
         '<p>Uma aprovação só significa que os critérios documentados passaram naquela avaliação. Não garante rentabilidade, ausência de fraude ou identidade humana.</p><ul>']
     parts += ['<li>'+escape(str(note))+'</li>' for note in notes]
     parts+=['</ul>']
     if not evaluations:parts+=['<p>Nenhuma avaliação disponível. Não há qualquer mensagem a enviar ao Telegram.</p>']
     for e in evaluations:
         state='APROVADA NOS CRITÉRIOS' if e.eligible else 'BLOQUEADA PARA TELEGRAM'
-        if e.source!='birdeye':state='DADOS FICTÍCIOS — NUNCA ENVIÁVEIS'
+        if e.source not in EVALUATION_SOURCES:state='DADOS FICTÍCIOS — NUNCA ENVIÁVEIS'
         parts += [f'<article><h2><code>{escape(e.wallet)}</code></h2><p><b>{state}</b></p>',
             f'<p>Avaliação: {escape(local_time(e.evaluated_at))} | critérios {escape(e.criteria_version)} | fonte {escape(e.source)}</p>',
             '<table><tr><th>Verificação obrigatória</th><th>Estado</th><th>Motivo</th></tr>']

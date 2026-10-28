@@ -1,6 +1,6 @@
 # Critérios, métricas e limites heurísticos
 
-Versão inicial: `2026-10-28.1`. Os valores efetivos estão em `config.toml`. São **heurísticas conservadoras de triagem**, sem validação estatística de rentabilidade e sem otimização para carteiras observadas. Alterações devem aumentar a versão; cada fotografia também guarda a configuração completa e o seu hash. Alterar um limite, mesmo mantendo a versão, invalida a elegibilidade de uma fotografia antiga para envio.
+Versão inicial: `2026-10-28.1`; versão atual: `2026-10-28.2` (integração Helius autorizada, sem reduzir os limites de aprovação). Os valores efetivos estão em `config.toml`. São **heurísticas conservadoras de triagem**, sem validação estatística de rentabilidade e sem otimização para carteiras observadas. Alterações devem aumentar a versão; cada fotografia também guarda a configuração completa e o seu hash. Alterar um limite, mesmo mantendo a versão, invalida a elegibilidade de uma fotografia antiga para envio.
 
 ## Verificações obrigatórias
 
@@ -41,3 +41,12 @@ Intensidade superior a100 transações por dia, intervalos quase regulares em pe
 A rotina usa por defeito até5 tokens de descoberta, até10 carteiras, até5 páginas por endpoint e até40 pedidos/800 CU por execução. Esses limites controlam o custo, não autorizam ignorar o resto do histórico: atingir um limite torna a cobertura insuficiente. O teto local mensal é28 000 CU, abaixo dos30 000 do Standard. No Actions reserva-se antecipadamente o orçamento inteiro de800 CU antes da rede, mesmo se o consumo real for menor; 31 reservas totalizam24 800 CU. O consumo noutras aplicações não é conhecido pelo contador local.
 
 No máximo são tentadas5 mensagens por execução. Uma carteira já enviada só pode ser novamente considerada depois de30 dias e de um período de análise completamente posterior ao anterior. Tentativas incertas não são repetidas automaticamente. Nenhum limite permite enviar erros, candidatas, demonstrações ou resultados vazios.
+
+
+## Complemento Helius Free
+
+A nova fonte tem orçamento próprio: até100 pedidos e5 000 créditos máximos por execução, teto local900 000 por mês e5 pedidos/segundo. São margens abaixo do Free documentado (1 milhão/mês,10 pedidos/segundo). O cliente reserva pelo máximo da página solicitada antes de cada tentativa; no Actions pré-reserva-se o orçamento inteiro. Não há compra de créditos nem upgrades. O preço de uma API paga não é confundido com consumo dos créditos incluídos no Free.
+
+A descoberta inicial consulta até3 tokens por execução, até5 páginas de100 transações por endereço, até3 endereços (mint/curva/pools conhecidos) e até20 carteiras observadas por token. Estes limites podem deixar transações por analisar: os cursores ficam guardados e a cobertura global não é declarada completa. Novas compras e variantes Pump não suportadas permanecem desconhecidas.
+
+O histórico e os eventos brutos são conservados separadamente. Transações coincidentes entre fontes entram uma única vez na contabilidade. Um valor histórico USD Birdeye só é associado à perna Helius se assinatura, instante, token, sentido e quantidade coincidirem inequivocamente. Taxas em lamports não são convertidas retroativamente com SOL atual. A ausência de uma compra no histórico do mint não prova que não ocorreu noutro mercado.
