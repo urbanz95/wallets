@@ -74,9 +74,15 @@ A sondagem faz no máximo uma consulta Birdeye e uma Helius, sem retentativas: r
 
 Se passar, confirmaste apenas esses pedidos e o acesso das tuas chaves naquele instante. Não demonstraste a cobertura de todos os dados ou endpoints.
 
-Nas execuções seguintes, deixa `initialize_state` desmarcado. Para recolher e analisar, deixa também `probe_only` desmarcado. O campo `wallet` passa a ser opcional para análise manual; a descoberta automática continua a funcionar. Podes deixar `notify` desmarcado durante a primeira análise completa.
+Nas execuções seguintes, deixa `initialize_state` desmarcado. Para recolher e analisar, deixa também `probe_only` e `probe_contracts` desmarcados. O campo `wallet` passa a ser opcional para análise manual; a descoberta automática continua a funcionar. Podes deixar `notify` desmarcado durante a primeira análise completa.
 
 A execução diária permite notificações elegíveis. Se nenhuma carteira passar **todas** as verificações, não chega mensagem alguma. A Helius melhora a informação disponível, mas não remove as limitações de cobertura, contabilidade ou automatização: os casos insuficientes continuam INDETERMINADOS.
+
+### Executar a versão corrigida
+
+Depois de uma atualização, abre **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow** e escolhe a branch **main**. Isso cria uma execução nova com o código atual. O botão **Re-run jobs** de uma execução antiga repete o código dessa execução e pode repetir o erro antigo.
+
+Para uma análise normal sem envio manual, deixa `initialize_state`, `probe_only`, `probe_contracts` e `notify` desmarcados; `wallet` pode ficar vazio. As execuções antigas continuam a mostrar o resultado que tiveram. Consulta a execução nova para verificar a correção.
 
 ## 6. Depois da configuração
 

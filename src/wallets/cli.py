@@ -256,7 +256,7 @@ def _probe_contract_shape(path,result):
 
 
 def probe_contracts(args,config):
-    """Até quatro leituras gratuitas, sem retentativas, avaliações ou notificações."""
+    """Até cinco leituras gratuitas, sem retentativas, avaliações ou notificações."""
     if args.provider!='birdeye':raise ValueError('--contracts só suporta --provider birdeye')
     key=os.environ.get('BIRDEYE_API_KEY')
     if not key:
@@ -265,24 +265,34 @@ def probe_contracts(args,config):
     if not args.wallet:raise ValueError('probe --contracts exige --wallet')
     checkpoint=checkpoint_for(args)
     end=utcnow();start=end-timedelta(days=config['lookback_days'])
-    requests=(
+    requests=[
         ('GET','/trader/txs/seek_by_time',{'address':args.wallet,'before_time':int(end.timestamp()),'tx_type':'all','ui_amount_mode':'raw','offset':0,'limit':1}),
         ('POST','/wallet/v2/transfer',{'wallet':args.wallet,'time_from':int(start.timestamp()),'time_to':int(end.timestamp()),'limit':1}),
         ('POST','/wallet/v2/pnl/details',{'wallet':args.wallet,'duration':'all','pnl_method':'wac',
             'position_scope':'duration_only','sort_by':'last_trade','sort_type':'desc','offset':0,'limit':1}),
         ('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity',
             'sort_by':'value','sort_type':'desc','offset':0,'limit':1}),
-    )
-    api=dict(config['api'],max_requests_per_run=4,max_retries=0,max_credits_per_run=82)
+    ]
+    api=dict(config['api'],max_requests_per_run=5,max_retries=0,max_credits_per_run=92)
     failed=False
     with process_lock(args.db),Store(args.db) as store:
-        if args.checkpoint_command and not store.prepay_run(end.strftime('%Y-%m'),82,api['monthly_credit_ceiling'],checkpoint):
+        if args.checkpoint_command and not store.prepay_run(end.strftime('%Y-%m'),92,api['monthly_credit_ceiling'],checkpoint):
             raise ValueError('Quota mensal local insuficiente para sondagem de contratos')
         client=BirdeyeClient(key,store,api)
         for method,path,query in requests:
             try:
                 result=client.request(method,path,query if method=='GET' else None,query if method=='POST' else None,cache=False)
                 print(f'Contrato {method} {path}: '+dumps(_probe_structure(result)),flush=True)
+                # Uma segunda página verifica o contrato real de continuação,
+                # sem percorrer todo o histórico nem guardar o cursor nos logs.
+                if path=='/wallet/v2/transfer' and 'cursor' not in query:
+                    cursor=result.get('next_cursor')
+                    if cursor:
+                        if isinstance(cursor,str) and len(cursor)<=65536:
+                            requests.append(('POST',path,{'wallet':args.wallet,'cursor':cursor}))
+                        else:
+                            failed=True
+                            print('Cursor de transferências inválido; continuação não consultada.',flush=True)
                 if not _probe_contract_shape(path,result):
                     failed=True
                     print('Estrutura obrigatória do contrato indisponível; cobertura não confirmada.',flush=True)
@@ -290,7 +300,7 @@ def probe_contracts(args,config):
                 failed=True
                 print(str(exc),file=sys.stderr,flush=True)
             finally:checkpoint()
-    print('Sondagem de contratos concluída: no máximo 4 pedidos e 82 CU; sem avaliação de carteiras nem Telegram.',flush=True)
+    print('Sondagem de contratos concluída: no máximo 5 pedidos e 92 CU; sem avaliação de carteiras nem Telegram.',flush=True)
     return 2 if failed else 0
 
 
@@ -338,7 +348,7 @@ def main(argv=None):
             p.add_argument('--wallet',action='append',default=[]);p.add_argument('--token',action='append',default=[]);p.add_argument('--notify',action='store_true')
         if name=='probe':
             p.add_argument('--wallet');p.add_argument('--provider',choices=('birdeye','helius','both'),default='birdeye')
-            p.add_argument('--contracts',action='store_true',help='Até quatro consultas Birdeye sem retentativas, só diagnóstico estrutural e sem Telegram')
+            p.add_argument('--contracts',action='store_true',help='Até cinco consultas Birdeye sem retentativas, só diagnóstico estrutural e sem Telegram')
         if name=='followup':
             p.add_argument('--selection',required=True);p.add_argument('--as-of')
     args=parser.parse_args(argv)

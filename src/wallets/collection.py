@@ -221,7 +221,7 @@ class Collector:
     def _transfers(self, wallet, start, end):
         rows, cursor, seen = [], None, set()
         for _ in range(self.max_pages):
-            body = {'cursor': cursor} if cursor else {
+            body = {'wallet': wallet, 'cursor': cursor} if cursor else {
                 'wallet': wallet, 'time_from': int(start.timestamp()),
                 'time_to': int(end.timestamp()), 'limit': 100}
             result = self.client.request('POST', '/wallet/v2/transfer', body=body)

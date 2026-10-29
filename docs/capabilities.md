@@ -74,7 +74,7 @@ Todos usam `https://public-api.birdeye.so`. Os métodos e nomes de parâmetros a
 
 - `POST /wallet/v2/transfer`: **10 CU/pedido**, Solana desde epoch 257 (12-11-2021).
 - Corpo inicial: `wallet`, `time_from`, `time_to`, `limit`; sem filtros de valor ou token para a análise integral. Podem existir filtros de sentido/montante/contraparte.
-- Páginas seguintes: enviar **apenas** `cursor` com o `next_cursor` anterior. Não juntar filtros antigos ao cursor.
+- A nota documental indica apenas `cursor` nas páginas seguintes, mas a API real respondeu HTTP400 `wallet is required`. O corpo de continuação envia **`wallet` e `cursor`**, sem repetir filtros de tempo ou montante. A sondagem verifica também uma continuação, quando existe cursor.
 - Resposta `data` é um array. A nota de utilização documenta `next_cursor`, mas o esquema não fixa a sua localização: ausência ambígua, resposta malformada ou página cheia sem indicação fiável de fim não prova cobertura integral.
 - Campos por evento: `unix_time`, `block_number`, `token_address`, `tx_hash`, `from_address`, `to_address`, contas de token, `amount`, `ui_amount`, `token_info`, `flow`, `action`.
 - Ações: `mint`, `burn`, `transfer`, `set_authority`. Um valor USD de transferência não identifica o custo que o proprietário pagou para adquirir os tokens.

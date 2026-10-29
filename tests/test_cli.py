@@ -299,7 +299,7 @@ class CLITests(unittest.TestCase):
         def checkpoint():
             order.append('save')
             with Store(self.db) as state:
-                self.assertEqual(state.db.execute('SELECT credits FROM budgets').fetchone()[0],82)
+                self.assertEqual(state.db.execute('SELECT credits FROM budgets').fetchone()[0],92)
                 self.assertEqual(state.latest_evaluations(),[])
         def transport(request):
             self.assertTrue(order)
@@ -405,3 +405,31 @@ class CLITests(unittest.TestCase):
             code,out,err=self.call('probe','--contracts','--wallet',SOL,'--checkpoint-command','mock-save')
         self.assertEqual(code,2);client.assert_not_called()
         self.assertNotIn('PRIVATE-',out+err)
+
+
+class TransferContinuationProbeTests(unittest.TestCase):
+    setUp = CLITests.setUp
+    call = CLITests.call
+    def test_probe_checks_cursor_wallet_without_reusing_time_filters(self):
+        bodies=[]
+        def transport(request):
+            path=urlsplit(request.full_url).path
+            if path=='/wallet/v2/transfer':
+                body=json.loads(request.data);bodies.append(body)
+                if 'cursor' not in body:
+                    return {'success':True,'data':[{}],'next_cursor':'OPAQUE-PRIVATE-CURSOR'}
+                self.assertEqual(body,{'wallet':SOL,'cursor':'OPAQUE-PRIVATE-CURSOR'})
+                return {'success':True,'data':[{}],'next_cursor':'ANOTHER-PRIVATE-CURSOR'}
+            if path=='/wallet/v2/pnl/details':return {'data':{'tokens':[]}}
+            return {'success':True,'data':{'items':[]},'pagination':{'total':0}}
+        clients=[]
+        def factory(key,store,config):
+            client=BirdeyeClient(key,store,config,transport=transport,clock=lambda:NOW,sleep=lambda _:None)
+            clients.append(client);return client
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}),patch('wallets.cli.BirdeyeClient',side_effect=factory),patch('wallets.cli.Notifier') as notifier:
+            code,out,err=self.call('probe','--contracts','--wallet',SOL)
+        self.assertEqual((code,err),(0,''))
+        self.assertEqual((clients[0].requests,clients[0].credits),(5,92))
+        self.assertEqual(len(bodies),2)
+        self.assertNotIn('PRIVATE-',out+err)
+        notifier.assert_not_called()

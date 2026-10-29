@@ -257,3 +257,24 @@ class RealBirdeyeConstraintTests(unittest.TestCase):
         self.assertTrue(provider['pages_complete']['trades'])
         self.assertFalse(coverage.truncated)
         self.assertFalse(any('fora do período' in note for note in coverage.failures))
+
+
+class TransferContinuationTests(unittest.TestCase):
+    setUp = CollectionTests.setUp
+    tearDown = CollectionTests.tearDown
+    collector = CollectionTests.collector
+
+    def test_cursor_requires_wallet_and_does_not_repeat_original_filters(self):
+        client=FakeClient()
+        calls=[]
+        def request(method,path,params=None,body=None,**kwargs):
+            calls.append(body)
+            if 'cursor' not in body:
+                return {'success':True,'data':[{'tx_hash':'first'}],'next_cursor':'opaque'}
+            self.assertEqual(body,{'wallet':WALLET,'cursor':'opaque'})
+            return {'success':True,'data':[{'tx_hash':'second'}]}
+        client.request=request
+        rows,complete=self.collector(client)._transfers(WALLET,NOW-timedelta(days=30),NOW)
+        self.assertTrue(complete)
+        self.assertEqual([row['tx_hash'] for row in rows],['first','second'])
+        self.assertEqual(len(calls),2)

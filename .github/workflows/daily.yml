@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       probe_contracts:
-        description: 'Só diagnosticar contratos Birdeye: quatro consultas, sem análise nem Telegram'
+        description: 'Só diagnosticar contratos Birdeye: até cinco consultas, sem análise nem Telegram'
         type: boolean
         default: false
       wallet:
