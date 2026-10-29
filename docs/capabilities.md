@@ -61,7 +61,7 @@ Todos usam `https://public-api.birdeye.so`. Os métodos e nomes de parâmetros a
 [Contrato oficial](https://data.birdeye.so/docs/data-api/transactions/get-trader-txs-seek-by-time).
 
 - `GET /trader/txs/seek_by_time`: **12 CU/pedido**.
-- `address`, `after_time`, `before_time` (Unix em segundos), `tx_type=all`, `ui_amount_mode=raw`, `offset`, `limit` até 100; `offset + limit <= 10000`. Não existe parâmetro de ordenação neste esquema.
+- `address`, um único limite temporal, `tx_type=all`, `ui_amount_mode=raw`, `offset`, `limit` até100; `offset + limit <=10000`. O schema publica `after_time` e `before_time` como opcionais, mas a API real recusa ambos em simultâneo (HTTP422: `one of either before_time or after_time`). O projeto envia apenas `before_time` fixado no corte e aplica o início da janela localmente. Não existe parâmetro ou garantia de ordenação neste esquema: nunca terminar páginas só por encontrar uma operação antiga.
 - Resposta `data.items`; aceitar `hasNext` e `has_next` documentados.
 - Identidade: `tx_hash`, `ins_index`, `inner_ins_index`; contexto: `block_unix_time`, `block_number`, `owner`, `source`, `signers`.
 - Pernas `base`/`quote` ou `from`/`to`, com `address`, `amount` bruto, `decimals`, alterações assinadas e `type_swap`. `price`, `base_price`, `quote_price` referem-se ao instante histórico; `nearest_price` é apenas referência próxima.
@@ -95,10 +95,11 @@ Todos usam `https://public-api.birdeye.so`. Os métodos e nomes de parâmetros a
 [Contrato oficial](https://data.birdeye.so/docs/data-api/wallet-networth-pnl/post-wallet-v2-pnl-details).
 
 - `POST /wallet/v2/pnl/details`: **30 CU/pedido**.
-- Corpo: `wallet`, `duration` (`all`, `90d`, `30d`, `7d`, `24h`), `position_scope`, `pnl_method=wac`, `sort_by=last_trade`, `sort_type`, `offset` até 10 000, `limit` até 100. Não limitar `token_addresses` aos tokens vencedores/da descoberta.
+- Corpo: `wallet`, `duration` (`all`, `90d`, `30d`, `7d`, `24h`), **`position_scope=duration_only`**, `pnl_method=wac`, `sort_by=last_trade`, `sort_type`, `offset` até 10 000, `limit` até 100. Não limitar `token_addresses` aos tokens vencedores/da descoberta.
 - `data.tokens`, `data.summary.unique_tokens`, `data.meta.time`.
 - Por token: `counts`, `quantity`, `cashflow_usd`, `pnl`, `pricing`. Separar realizado, não realizado e custo da quantidade vendida conforme fornecidos.
 - `wac` usa custo médio ponderado do inventário existente; recompras posteriores não devem alterar vendas realizadas anteriores. `net_cash` usa médias cumulativas e pode mudar resultados históricos após novas compras; não o usar para validação temporal deste projeto.
+- A API real confirmou que WAC só suporta `position_scope=duration_only`: a combinação anterior com `cumulative` devolvia HTTP400. O âmbito e a duração são guardados nas métricas do fornecedor. `duration=all` continua informativo e separado da janela FIFO local.
 - Uma janela móvel agregada não fornece semanas independentes nem prova custo de transferências. Reconciliação independente continua necessária para aprovação.
 
 ## Enriquecimento opcional por assinatura

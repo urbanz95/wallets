@@ -266,11 +266,10 @@ def probe_contracts(args,config):
     checkpoint=checkpoint_for(args)
     end=utcnow();start=end-timedelta(days=config['lookback_days'])
     requests=(
-        ('GET','/trader/txs/seek_by_time',{'address':args.wallet,'after_time':int(start.timestamp()),
-            'before_time':int(end.timestamp()),'tx_type':'all','ui_amount_mode':'raw','offset':0,'limit':1}),
+        ('GET','/trader/txs/seek_by_time',{'address':args.wallet,'before_time':int(end.timestamp()),'tx_type':'all','ui_amount_mode':'raw','offset':0,'limit':1}),
         ('POST','/wallet/v2/transfer',{'wallet':args.wallet,'time_from':int(start.timestamp()),'time_to':int(end.timestamp()),'limit':1}),
         ('POST','/wallet/v2/pnl/details',{'wallet':args.wallet,'duration':'all','pnl_method':'wac',
-            'position_scope':'cumulative','sort_by':'last_trade','sort_type':'desc','offset':0,'limit':1}),
+            'position_scope':'duration_only','sort_by':'last_trade','sort_type':'desc','offset':0,'limit':1}),
         ('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity',
             'sort_by':'value','sort_type':'desc','offset':0,'limit':1}),
     )

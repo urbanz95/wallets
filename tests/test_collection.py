@@ -81,7 +81,8 @@ class CollectionTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get_cursor('trader:' + WALLET))
         client.rows, client.more, client.calls = [], False, []
         collector.collect(WALLET, start, NOW)
-        self.assertEqual(client.calls[0][2]['after_time'], int((NOW-timedelta(seconds=1)).timestamp()))
+        self.assertEqual(client.calls[0][2]['before_time'], int(NOW.timestamp()))
+        self.assertNotIn('after_time',client.calls[0][2])
 
     def test_truncation_never_advances_cursor(self):
         client = FakeClient([trade()], more=True)
@@ -214,3 +215,45 @@ class HoldingsPaginationTests(unittest.TestCase):
         _, complete, _ = self.collector(client)._paged('/wallet/v2/current-net-worth', 'GET',
                                                        {'wallet': WALLET}, 'items', page_size=1)
         self.assertFalse(complete)
+
+
+class RealBirdeyeConstraintTests(unittest.TestCase):
+    setUp = CollectionTests.setUp
+    tearDown = CollectionTests.tearDown
+    collector = CollectionTests.collector
+
+    def test_mutually_exclusive_time_limits_and_wac_scope_in_real_contract(self):
+        client=FakeClient([trade()])
+        original=client.request
+        def request(method,path,params=None,body=None,**kwargs):
+            if path=='/trader/txs/seek_by_time':
+                self.assertEqual(params['before_time'],int(NOW.timestamp()))
+                self.assertNotIn('after_time',params)
+            if path=='/wallet/v2/pnl/details':
+                self.assertEqual((body['pnl_method'],body['position_scope']),('wac','duration_only'))
+            return original(method,path,params,body,**kwargs)
+        client.request=request
+        events,coverage,provider=self.collector(client).collect(WALLET,NOW-timedelta(days=30),NOW)
+        self.assertEqual(len(events),2)
+        self.assertEqual(provider['pnl_position_scope'],'duration_only')
+        self.assertEqual(provider['pnl_duration'],'all')
+        self.assertFalse(coverage.complete)
+
+    def test_old_row_does_not_end_pagination_or_hide_in_window_rows_later(self):
+        client=FakeClient()
+        original=client.request
+        offsets=[]
+        def request(method,path,params=None,body=None,**kwargs):
+            if path=='/trader/txs/seek_by_time':
+                offsets.append(params['offset'])
+                if params['offset']==0:
+                    return {'success':True,'data':{'items':[trade(block_unix_time=int((NOW-timedelta(days=100)).timestamp()))],'hasNext':True}}
+                return {'success':True,'data':{'items':[trade()],'hasNext':False}}
+            return original(method,path,params,body,**kwargs)
+        client.request=request
+        events,coverage,provider=self.collector(client).collect(WALLET,NOW-timedelta(days=30),NOW)
+        self.assertEqual(offsets,[0,100])
+        self.assertEqual(len(events),2)
+        self.assertTrue(provider['pages_complete']['trades'])
+        self.assertFalse(coverage.truncated)
+        self.assertFalse(any('fora do período' in note for note in coverage.failures))

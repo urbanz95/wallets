@@ -332,6 +332,11 @@ class CLITests(unittest.TestCase):
         for request in calls:
             body=json.loads(request.data) if request.data else parse_qs(urlsplit(request.full_url).query)
             self.assertIn(body['limit'],(1,['1']))
+            if urlsplit(request.full_url).path=='/trader/txs/seek_by_time':
+                self.assertIn('before_time',body)
+                self.assertNotIn('after_time',body)
+            if urlsplit(request.full_url).path=='/wallet/v2/pnl/details':
+                self.assertEqual((body['pnl_method'],body['position_scope']),('wac','duration_only'))
         with Store(self.db) as state:
             self.assertEqual(state.db.execute('SELECT COUNT(*) FROM cache').fetchone()[0],0)
             self.assertEqual(state.db.execute('SELECT COUNT(*) FROM notifications').fetchone()[0],0)

@@ -1,5 +1,11 @@
 # Registo da entrega
 
+## Correção dos pedidos Birdeye — 29-10-2026
+
+A captura privada das mensagens da API identificou as causas dos dois erros: o histórico aceita apenas um de `before_time` ou `after_time`; o método WAC só admite `position_scope=duration_only`. A revisão corrige os pedidos e a sondagem, sem mudar os critérios de aprovação. Os307 testes locais passaram, incluindo paginação sem ordem presumida, exclusão de dados futuros, backfill, indexação atrasada e confidencialidade do diagnóstico. A validação autenticada desta correção é registada abaixo quando concluída.
+
+O histórico usa apenas o corte superior e filtra a janela localmente. Isso pode exigir mais páginas do que uma consulta com dois limites. O cursor guarda a cobertura confirmada, mas não permite saltar páginas ou operações antigas: pedidos repetidos são deduplicados e podem acrescentar operações indexadas com atraso. Ao atingir o orçamento ou o máximo de páginas, o histórico continua truncado e as verificações dependentes permanecem indeterminadas.
+
 ## Validação real e persistência — 29-10-2026
 
 O utilizador configurou os cinco secrets em Actions. A [sondagem controlada](https://github.com/urbanz95/wallets/actions/runs/40771232173) confirmou um pedido Birdeye de posições (30 CU) e um pedido Helius de histórico (máximo10 créditos). O cofre foi inicializado e autenticado sem publicar os valores dos secrets.

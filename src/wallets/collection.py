@@ -247,27 +247,24 @@ class Collector:
         if start >= end or end > self.clock():
             raise ValueError('Período inválido ou com informação futura.')
         coverage = Coverage(start, end, self.clock(), source='birdeye')
-        provider = {'source': 'birdeye', 'pnl_method': 'wac', 'pnl': [], 'holdings': [],
+        provider = {'source': 'birdeye', 'pnl_method': 'wac', 'pnl_position_scope': 'duration_only', 'pnl_duration': 'all', 'pnl': [], 'holdings': [],
                     'limitations': ['Idade do token na descoberta refere listagem Birdeye, não criação do mint.',
                                      'Plataforma pump.fun é uma aproximação de launchpad; não confirma categoria memecoin.']}
         events = []
         complete = {}
         cursor_key = 'trader:' + wallet
-        cursor = self.store.get_cursor(cursor_key)
         start_key='trader-start:'+wallet
         covered_start=self.store.get_cursor(start_key)
         advance_cursor = False
-        seek_start = start
-        if cursor and covered_start:
+        update_covered_start = True
+        if covered_start:
             try:
-                if start>=parse_time(covered_start):
-                    seek_start = max(start, min(end, parse_time(cursor)) - timedelta(seconds=1))
+                update_covered_start = start < parse_time(covered_start)
             except (ValueError, TypeError):
                 coverage.failures.append('Cursor histórico inválido; recolha integral repetida.')
         try:
             rows, done, _ = self._paged('/trader/txs/seek_by_time', 'GET', {
-                'address': wallet, 'after_time': int(seek_start.timestamp()),
-                'before_time': int(end.timestamp()), 'tx_type': 'all', 'ui_amount_mode': 'raw'}, 'items')
+                'address': wallet, 'before_time': int(end.timestamp()), 'tx_type': 'all', 'ui_amount_mode': 'raw'}, 'items')
             complete['trades'] = done
             tx_instructions = {}
             trader_errors = False
@@ -278,7 +275,12 @@ class Collector:
                         coverage.failures.append('Transação de outra carteira; excluída.')
                         continue
                     stamp = _timestamp(row)
-                    if not start <= stamp <= end:
+                    # A API real aceita apenas um limite temporal. Pedir o
+                    # limite superior impede dados futuros; o inferior é local.
+                    # Sem ordem documentada, linhas antigas não terminam páginas.
+                    if stamp < start:
+                        continue
+                    if stamp > end:
                         trader_errors = True
                         coverage.failures.append('Transação fora do período; excluída da análise.')
                         continue
@@ -319,7 +321,7 @@ class Collector:
         try:
             pnl, done, meta = self._paged('/wallet/v2/pnl/details', 'POST', {
                 'wallet': wallet, 'duration': 'all', 'pnl_method': 'wac',
-                'position_scope': 'cumulative', 'sort_by': 'last_trade', 'sort_type': 'desc'}, 'tokens')
+                'position_scope': 'duration_only', 'sort_by': 'last_trade', 'sort_type': 'desc'}, 'tokens')
             provider['pnl'], provider['pnl_meta'] = pnl, {k: v for k, v in meta.items() if k != 'tokens'}
             complete['pnl'] = done
         except BirdeyeError as exc:
@@ -355,7 +357,7 @@ class Collector:
         # apenas repete consultas deduplicáveis, nunca salta eventos por gravar.
         if advance_cursor:
             self.store.set_cursor(cursor_key, iso(end))
-            if seek_start==start or covered_start is None:
+            if update_covered_start:
                 self.store.set_cursor(start_key,iso(start))
         provider['discovery_labels']=self.store.discovery_evidence(wallet,end)
         # Enriquecimento limitado: taxas observadas em lamports, separado do FIFO.
