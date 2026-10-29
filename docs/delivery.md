@@ -8,7 +8,18 @@ A primeira análise falhou no checkpoint final. A revisão seguinte acrescentou 
 
 Uma cópia do último snapshot foi descarregada, decifrada, autenticada e validada em SQLite. Contagens nessa fotografia:2472 transações Helius de origem,1467 eventos Helius normalizados,51 pares de descoberta carteira/token e10 avaliações. **Zero carteiras aprovadas; zero notificações.** Todas as oito verificações ficaram indeterminadas nas10 carteiras. Os resultados não constituem lucro líquido validado nem acompanhamento posterior.
 
-A execução real também revelou erros Birdeye HTTP400/422, respostas sem a estrutura esperada e limites de orçamento. A leitura do total do inventário foi corrigida para `pagination.total`, conforme o contrato oficial; os restantes erros exigem diagnóstico controlado, sem inventar formatos nem alterar critérios. O limite por execução pode deixar candidatas por analisar; a rotação e a atualização incremental prosseguem nas execuções seguintes. Os contadores mensais preservam também as reservas da execução que falhou.
+A execução real também revelou erros Birdeye HTTP400/422, respostas sem a estrutura esperada e limites de orçamento. A leitura do total do inventário foi corrigida para `pagination.total`, conforme o contrato oficial. O cliente passou a identificar o método/caminho sem parâmetros privados e a aceitar diagnósticos de validação limitados, sem mensagens livres ou corpos autenticados. A recuperação foi também confirmada com GitHub CLI2.46, mantendo paginação integral dos snapshots. O limite por execução pode deixar candidatas por analisar; a rotação e a atualização incremental prosseguem nas execuções seguintes. Os contadores mensais preservam também as reservas da execução que falhou.
+
+A [sondagem de quatro contratos](https://github.com/urbanz95/wallets/actions/runs/40840954635) reservou82 CU e usou uma candidata real já descoberta, sem retentativas, cache ou Telegram:
+
+| Contrato | Resultado real nesta sondagem | Consequência |
+|---|---|---|
+| `GET /trader/txs/seek_by_time` | HTTP422 com os parâmetros documentados | Histórico Birdeye indisponível nesta consulta; cobertura indeterminada. Não há evidência suficiente para atribuir o erro ao plano ou inventar outros parâmetros. |
+| `POST /wallet/v2/transfer` | Resposta200 com um registo e cursor | Acesso e primeira página confirmados; não prova cobertura integral. |
+| `POST /wallet/v2/pnl/details` | HTTP400 com os parâmetros documentados | PnL fornecido indisponível nesta consulta; não substituído por lucro fabricado. |
+| `GET /wallet/v2/current-net-worth` | Resposta200, `pagination` presente e `data.items=null` | Não interpretado como lista vazia; inventário e perdas abertas continuam indeterminados. |
+
+A sondagem termina com código2 se algum contrato falhar, pelo que essa execução aparece a vermelho. O checkpoint final e a cópia cifrada passaram: este resultado distingue uma limitação de dados de uma falha de persistência. O [CI da revisão](https://github.com/urbanz95/wallets/actions/runs/40840837627) passou296 testes sem rede, incluindo o novo diagnóstico, a paginação e os bloqueios de envio. Não se fez nova análise integral apenas para gastar mais quota a repetir estes erros.
 
 A execução diária continua programada para07:17 UTC. A validação manual acima manteve `notify=false`. O token/chat Telegram não foram usados para um envio real: só poderá acontecer após uma carteira elegível. O utilizador deve conservar a chave original do cofre e nunca reinicializar um estado existente. Não faltam novos secrets para prosseguir com a recolha.
 
