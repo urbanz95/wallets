@@ -151,7 +151,7 @@ class HeliusHistory:
                 query['paginationToken'] = pending['next']
             queried_windows.append({'start': query_start, 'end': query_end, 'pagination_token': pending.get('next')})
             try:
-                result = self.client.request('getTransactionsForAddress', [address, query])
+                result = self.client.request('getTransactionsForAddress', [address, query], cache=False)
                 pages += 1
                 if not isinstance(result, dict) or not isinstance(result.get('data'), list):
                     raise HistoryError('Histórico Helius sem array de transações válido.')

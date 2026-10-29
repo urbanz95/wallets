@@ -97,6 +97,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: encrypted-wallets-state-${{ github.run_id }}-${{ github.run_attempt }}
-          path: state/wallets.sqlite.enc
+          path: |
+            state/wallets.sqlite.enc
+            state/wallets.sqlite.pending.enc
           if-no-files-found: error
           retention-days: 90

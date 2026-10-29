@@ -30,7 +30,7 @@ def tx(signature='sig', *, at=None, slot=100, index=0, owner=WALLET, token=TOKEN
 class Client:
     def __init__(self, responses=()):
         self.responses = list(responses); self.calls=[]
-    def request(self, method, params):
+    def request(self, method, params, **kwargs):
         self.calls.append((method,deepcopy(params)))
         if not self.responses:raise AssertionError('Pedido inesperado')
         result=self.responses.pop(0)

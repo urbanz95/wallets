@@ -1,4 +1,9 @@
 import importlib.util
+import base64
+import io
+import json
+import subprocess
+from contextlib import redirect_stdout
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -113,6 +118,67 @@ class StateVaultTests(unittest.TestCase):
         self.vault.init(self.db)
         self.assertTrue(self.db.with_suffix('.sqlite.enc').exists())
         self.assertEqual(self.db.with_suffix('.sqlite.enc').stat().st_mode & 0o777, 0o600)
+
+    def test_failed_upload_keeps_authenticated_pending_copy_and_confirmed_backup(self):
+        self.vault.init(self.db)
+        confirmed = self.db.with_suffix('.sqlite.enc').read_bytes()
+        with sqlite3.connect(self.db) as con:
+            con.execute('CREATE TABLE evidence(payload TEXT)')
+            con.execute('INSERT INTO evidence VALUES(?)', ('preserve-evidence',))
+        self.github.fail_upload = True
+        with self.assertRaises(module.VaultError):
+            self.vault.save(self.db)
+        pending = self.db.with_suffix('.sqlite.pending.enc')
+        self.assertEqual(pending.stat().st_mode & 0o777, 0o600)
+        body = json.loads(Fernet(self.key).decrypt(pending.read_bytes()))
+        self.assertEqual(body['generation'], module._read_generation(self.db))
+        self.assertIn(b'preserve-evidence', base64.b64decode(body['database']))
+        self.assertEqual(self.db.with_suffix('.sqlite.enc').read_bytes(), confirmed)
+        self.assertNotIn(b'preserve-evidence', pending.read_bytes())
+
+    def test_successful_checkpoint_removes_only_pending_copy(self):
+        self.vault.init(self.db)
+        pending = self.db.with_suffix('.sqlite.pending.enc')
+        pending.write_bytes(b'old-pending')
+        self.vault.save(self.db)
+        self.assertFalse(pending.exists())
+        self.assertTrue(self.db.with_suffix('.sqlite.enc').is_file())
+
+    def test_snapshot_compacts_freed_pages_without_removing_live_evidence(self):
+        with sqlite3.connect(self.db) as con:
+            con.execute('CREATE TABLE evidence(payload BLOB)')
+            con.executemany('INSERT INTO evidence VALUES(?)', [(b'x' * 8192,)] * 100)
+            con.execute('DELETE FROM evidence')
+            con.execute('INSERT INTO evidence VALUES(?)', (b'keep',))
+        original_size = self.db.stat().st_size
+        with patch.object(module, 'MAX_STATE_BYTES', 64 * 1024):
+            compacted = module._snapshot(self.db)
+        self.assertLess(len(compacted), original_size)
+        copy = Path(self.temp.name) / 'snapshot.sqlite'
+        copy.write_bytes(compacted)
+        with sqlite3.connect(copy) as con:
+            self.assertEqual(con.execute('SELECT payload FROM evidence').fetchone()[0], b'keep')
+        self.assertEqual(self.db.stat().st_size, original_size)
+
+    def test_github_failure_reports_http_status_without_authentication_data(self):
+        result = subprocess.CompletedProcess([], 1, b'', b'HTTP 403 https://private.invalid/?api-key=SECRET')
+        with patch.object(module.subprocess, 'run', return_value=result):
+            with self.assertRaises(module.VaultError) as failure:
+                module.GitHub().command(['api', 'repos/urbanz95/wallets'])
+        self.assertIn('HTTP 403', str(failure.exception))
+        self.assertNotIn('SECRET', str(failure.exception))
+        self.assertNotIn('private.invalid', str(failure.exception))
+
+    def test_storage_diagnostics_show_only_counts_and_sizes(self):
+        with sqlite3.connect(self.db) as con:
+            con.execute('CREATE TABLE source_transactions(payload TEXT)')
+            con.execute('INSERT INTO source_transactions VALUES(?)', ('PRIVATE-CONTENT',))
+        output = io.StringIO()
+        with redirect_stdout(output):
+            module.print_state_statistics(self.db)
+        self.assertIn('payload_bytes', output.getvalue())
+        self.assertIn('rows', output.getvalue())
+        self.assertNotIn('PRIVATE-CONTENT', output.getvalue())
 
 if __name__ == '__main__':
     unittest.main()

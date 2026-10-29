@@ -34,9 +34,11 @@ O disco do runner GitHub desaparece no fim de cada execução. Por isso, o SQLit
 - Cada checkpoint produz um snapshot SQLite consistente, cifrado e autenticado.
 - Os snapshots são novos assets no release `wallets-state`; os anteriores não são substituídos. O nome inclui a data UTC e um identificador aleatório.
 - A geração local tem de corresponder à última geração remota. Uma cópia antiga não pode substituir silenciosamente o estado mais recente.
-- Só o ficheiro `.enc` vai para o artefacto de recuperação do Actions, com retenção configurada de 90 dias. A política da conta GitHub pode encurtar esse prazo.
+- Só ficheiros cifrados vão para o artefacto de recuperação do Actions, com retenção configurada de 90 dias: `.enc` contém o último checkpoint confirmado e `.pending.enc`, quando existir, contém uma tentativa ainda não confirmada. A política da conta GitHub pode encurtar esse prazo.
 - Os assets de releases não têm expiração automática por retenção de Actions. Continuam a existir até serem apagados ou até ocorrer uma limitação da plataforma. Não são uma garantia eterna.
 - O código limita cada estado a 256 MiB. O número de snapshots cresce a cada checkpoint. Acompanhe o espaço ocupado e mantenha uma cópia cifrada externa. A limpeza é manual e deve preservar sempre a geração mais recente, várias anteriores e os backups externos.
+
+A cache e as transações Helius de origem usam compressão sem perda; payloads TEXT de estados antigos continuam legíveis. As páginas completas Helius não são duplicadas na cache porque as transações e os cursores já ficam guardados. Só a cache expirada é removida: provas, avaliações, notificações e reservas de quota são preservadas. O snapshot SQLite é compactado antes da cifragem, mantendo o limite de 256 MiB.
 
 O repositório permanece público. O cofre usa **cifragem**, não uma branch pública apresentada como privada. Os nomes dos assets revelam horários e frequência de checkpoints, mas não o conteúdo. Uma pessoa com escrita no repositório pode apagar os assets ou alterar o código; proteja a conta GitHub e reveja alterações antes de lhes dar acesso aos secrets.
 
@@ -45,6 +47,8 @@ Não se publicam relatórios HTML/CSV/JSON nem SQLite em claro como artefactos. 
 ## Recuperação de falhas
 
 Se a rede ou o último checkpoint falhar, as operações dependentes ficam bloqueadas. Na execução seguinte, a ferramenta restaura a geração remota mais recente. Não usa automaticamente uma geração anterior: isso poderia perder reservas de envio e voltar a notificar uma carteira.
+
+Uma falha de upload conserva também uma cópia local `.pending.enc` no artefacto cifrado. Essa cópia **não é restaurada automaticamente** e não prova que o checkpoint remoto foi confirmado. A recuperação exige autenticar o conteúdo, reconciliar a geração e verificar as reservas de quota e de envio antes de retomar; não se deve renomear ou publicar a cópia pendente às cegas. Os logs de erro apresentam apenas a causa sanitizada, códigos HTTP quando disponíveis e contagens/tamanhos de armazenamento, sem payloads nem credenciais.
 
 Se o último asset estiver corrompido, a chave tiver sido perdida, o release tiver sido apagado ou não houver um snapshot autenticável, a rotina **para sem reinicializar**. Verifique:
 

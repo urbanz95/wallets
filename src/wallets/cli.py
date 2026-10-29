@@ -109,6 +109,7 @@ def run(args, config):
     checkpoint=checkpoint_for(args)
     with process_lock(args.db), Store(args.db) as store:
         now=utcnow();start=now-timedelta(days=config['lookback_days'])
+        store.prune_cache(now)
         key=os.environ.get('BIRDEYE_API_KEY')
         notes=[];discovered=[];collector=None;helius_history=None;helius_client=None
         settings=config.get('helius',{})
@@ -172,9 +173,10 @@ def run(args, config):
         if collector:notes.append(f'Pedidos Birdeye nesta execução: {collector.client.requests}; CU reservados por pedido: {collector.client.credits}.')
         if helius_client:notes.append(f'Pedidos Helius nesta execução: {helius_client.requests}; créditos máximos reservados: {helius_client.credits}.')
         path=write_reports(store.latest_evaluations(),args.output,notes=notes,discoveries=store.discoveries())
+        print(f'Relatório local: {path}. Carteiras avaliadas nesta execução: {len(candidates)}.',flush=True)
+        for note in notes:print(note,flush=True)
         checkpoint()
-        print(f'Relatório local: {path}. Carteiras avaliadas nesta execução: {len(candidates)}.')
-        for note in notes:print(note)
+        print('Estado confirmado no armazenamento configurado.',flush=True)
         if args.notify:notify_from_store(store,config,checkpoint)
     return 0
 

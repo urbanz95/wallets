@@ -8,7 +8,48 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import zlib
 from .models import Event, Coverage, TokenResult, Check, Evaluation, Status, dumps, iso, parse_time
+
+# A compressão é apenas representação local. Não elimina nem modifica provas.
+# SQLite mantém compatibilidade com os payloads TEXT das versões anteriores.
+PAYLOAD_MAGIC = b'wallets:zlib:v1\x00'
+MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+
+
+def _pack_payload(text):
+    raw = text.encode('utf-8')
+    if len(raw) > MAX_PAYLOAD_BYTES:
+        raise ValueError('Payload de armazenamento acima do limite permitido')
+    return PAYLOAD_MAGIC + len(raw).to_bytes(8, 'big') + zlib.compress(raw, level=6)
+
+
+def _unpack_payload(payload):
+    if isinstance(payload, str):
+        if len(payload.encode('utf-8')) > MAX_PAYLOAD_BYTES:
+            raise ValueError('Payload de armazenamento acima do limite permitido')
+        return payload
+    if not isinstance(payload, (bytes, memoryview)):
+        raise ValueError('Formato de payload armazenado inválido')
+    payload = bytes(payload)
+    header_size = len(PAYLOAD_MAGIC) + 8
+    if (len(payload) <= header_size or not payload.startswith(PAYLOAD_MAGIC)
+            or len(payload) > MAX_PAYLOAD_BYTES + 1024 * 1024):
+        raise ValueError('Payload compactado inválido ou versão desconhecida')
+    expected = int.from_bytes(payload[len(PAYLOAD_MAGIC):header_size], 'big')
+    if expected > MAX_PAYLOAD_BYTES:
+        raise ValueError('Payload descompactado acima do limite permitido')
+    try:
+        decoder = zlib.decompressobj()
+        # Mais um byte permite detetar expansão indevida sem alocar a saída toda.
+        raw = decoder.decompress(payload[header_size:], expected + 1)
+        if (len(raw) != expected or not decoder.eof or decoder.unconsumed_tail
+                or decoder.unused_data):
+            raise ValueError('Payload compactado incompleto ou divergente')
+        return raw.decode('utf-8')
+    except (zlib.error, UnicodeDecodeError) as exc:
+        raise ValueError('Não foi possível validar o payload compactado') from exc
+
 
 SCHEMA = '''
 PRAGMA foreign_keys=ON;
@@ -102,9 +143,14 @@ class Store:
         with self.db:self.db.execute('INSERT OR REPLACE INTO cursors VALUES(?,?)',(key,str(value)))
     def cache_get(self,key,now):
         row=self.db.execute('SELECT payload,expires FROM cache WHERE key=?',(key,)).fetchone()
-        return json.loads(row[0]) if row and parse_time(row[1])>now else None
+        return json.loads(_unpack_payload(row[0])) if row and parse_time(row[1])>now else None
     def cache_put(self,key,value,expires_at):
-        with self.db:self.db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)',(key,iso(expires_at),dumps(value)))
+        with self.db:self.db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)',(key,iso(expires_at),_pack_payload(dumps(value))))
+    def prune_cache(self,now):
+        with self.db:
+            cursor=self.db.execute('DELETE FROM cache WHERE expires<=?',(iso(now),))
+            return cursor.rowcount
+
     def reserve_budget(self,month,cost,ceiling,namespace='birdeye'):
         if namespace not in ('birdeye','helius'):raise ValueError('Fornecedor não permitido')
         if isinstance(cost,bool) or not isinstance(cost,int) or cost<0:raise ValueError('Crédito inválido')
@@ -150,10 +196,10 @@ class Store:
                 at=iso(parse_time(row.get('blockTime')))
                 payload=dumps(row)
                 old=self.db.execute('SELECT payload FROM source_transactions WHERE source=? AND address=? AND signature=?',(source,address,signature)).fetchone()
-                if old and old[0]!=payload:raise ValueError('Transação de origem divergente')
-                self.db.execute('INSERT OR IGNORE INTO source_transactions VALUES(?,?,?,?,?)',(source,address,signature,at,payload))
+                if old and _unpack_payload(old[0])!=payload:raise ValueError('Transação de origem divergente')
+                self.db.execute('INSERT OR IGNORE INTO source_transactions VALUES(?,?,?,?,?)',(source,address,signature,at,_pack_payload(payload)))
     def get_source_transactions(self,source,address,start,end):
-        return [json.loads(r[0]) for r in self.db.execute('SELECT payload FROM source_transactions WHERE source=? AND address=? AND at>=? AND at<=? ORDER BY at,signature',(source,address,iso(start),iso(end)))]
+        return [json.loads(_unpack_payload(r[0])) for r in self.db.execute('SELECT payload FROM source_transactions WHERE source=? AND address=? AND at>=? AND at<=? ORDER BY at,signature',(source,address,iso(start),iso(end)))]
     def put_source_events(self,source,events):
         if source!='helius':raise ValueError('Origem de eventos não permitida')
         with self.db:

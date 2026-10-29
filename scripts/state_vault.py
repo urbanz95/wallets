@@ -42,7 +42,9 @@ class GitHub:
             # Não imprimir stderr: pode conter URLs ou dados de autenticação.
             if allow_missing and b'HTTP 404' in result.stderr:
                 return None
-            raise VaultError('Operação GitHub falhou; estado não confirmado.')
+            status=re.search(rb'HTTP ([0-9]{3})',result.stderr)
+            suffix=' (HTTP '+status.group(1).decode('ascii')+')' if status else ''
+            raise VaultError('Operação GitHub falhou'+suffix+'; estado não confirmado.')
         return result.stdout
 
     def release(self):
@@ -98,6 +100,8 @@ def _snapshot(db):
         path = Path(directory) / 'snapshot.sqlite'
         with sqlite3.connect(db) as source, sqlite3.connect(path) as target:
             source.backup(target)
+            # Libertar páginas vazias da cache no snapshot, sem alterar o DB aberto.
+            target.execute('VACUUM')
             if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise VaultError('A base de dados não passou a verificação de integridade.')
         raw = path.read_bytes()
@@ -164,6 +168,8 @@ class Vault:
                 'sha256': hashlib.sha256(raw).hexdigest(),
                 'database': base64.b64encode(raw).decode('ascii')}
         encrypted = self.fernet.encrypt(json.dumps(body, sort_keys=True).encode())
+        pending=db.with_suffix(db.suffix+'.pending.enc')
+        _private_write(pending,encrypted)  # recuperação cifrada mesmo se o upload falhar
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / generation
             _private_write(path, encrypted)
@@ -173,6 +179,7 @@ class Vault:
         if confirmed['name'] != generation or confirmed.get('size') != len(encrypted):
             raise VaultError('Checkpoint remoto não confirmado; notificações bloqueadas.')
         _private_write(db.with_suffix(db.suffix + '.enc'), encrypted)
+        pending.unlink(missing_ok=True)
         return generation
 
     def restore(self, db):
@@ -214,6 +221,22 @@ class Vault:
         return asset['name']
 
 
+def print_state_statistics(db):
+    """Só contagens/tamanhos; nunca imprime payloads, endereços ou credenciais."""
+    try:
+        with sqlite3.connect(Path(db).resolve().as_uri()+'?mode=ro',uri=True) as con:
+            counts={key:con.execute('PRAGMA '+key).fetchone()[0] for key in ('page_count','page_size','freelist_count')}
+            counts['tables']={}
+            names={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for name in ('cache','source_transactions','source_events','events','evaluations'):
+                if name in names:
+                    row=con.execute('SELECT COUNT(*),COALESCE(SUM(length(payload)),0) FROM '+name).fetchone()
+                    counts['tables'][name]={'rows':row[0],'payload_bytes':row[1]}
+        print('Diagnóstico de armazenamento (sem conteúdo): '+json.dumps(counts,sort_keys=True))
+    except (OSError,sqlite3.DatabaseError):
+        print('Diagnóstico de armazenamento indisponível.')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Cofre cifrado de estado GitHub')
     parser.add_argument('action', choices=['init', 'restore', 'save'])
@@ -222,8 +245,13 @@ def main(argv=None):
     try:
         vault = Vault(os.environ.get('STATE_ENCRYPTION_KEY', ''))
         generation = getattr(vault, args.action)(args.db)
-    except (VaultError, OSError, sqlite3.DatabaseError, json.JSONDecodeError):
-        print('Estado não confirmado. Execução interrompida sem autorização de novos envios.')
+    except VaultError as exc:
+        print('Estado não confirmado: '+str(exc)+' Execução interrompida sem autorização de novos envios.')
+        print_state_statistics(args.db)
+        return 1
+    except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
+        print('Estado não confirmado ('+type(exc).__name__+'). Execução interrompida sem autorização de novos envios.')
+        print_state_statistics(args.db)
         return 1
     print(f'Estado {args.action}: {generation}')
     return 0
