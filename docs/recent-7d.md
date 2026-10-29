@@ -42,3 +42,23 @@ Fotografia de29-10-2026 às14:23UTC. As idades referem-se à listagem nessa data
 | Veil (VEIL) | `HgTGdc29D5bDMrDvsCLnorxz899VyDj7ZN7FPa6vpump` |16,81 | Não |
 
 O resultado do teste real desta branch é registado separadamente. A tabela anterior não é uma lista fixa de entrada nem uma recomendação de compra.
+
+## Primeiro teste real e correções verificadas — 29-10-2026
+
+A [execução real40927762747](https://github.com/urbanz95/wallets/actions/runs/40927762747), com o commit `9491296`, terminou com sucesso:25candidatas,3carteiras avaliadas e0selecionadas. Usou40pedidos Birdeye/536CU e27pedidos Helius/2700créditos reservados por pedido. A reserva mensal central conservadora foi800/5000, sem reembolso do que não foi usado. Não houve novos erros400/422 nem notificações.
+
+Tokens dessa pesquisa, às18:08Europe/Lisbon:
+
+| Token | Endereço | Dias de listagem na pesquisa |
+|---|---|---:|
+| HYPER INU (HI) | `3w2TvVmTrtq4kSkoFVrTFQgz6MX7ThzDVrx9r5c3pump` |0,06 |
+| DogWifJob (JOB) | `9Pq7aLAbhDG2tTnS22cm6kuysZVcZpLFE368HWuypump` |1,95 |
+| Dessa (DESSA) | `npz2FhoufQ7pKqhGpaipYWacrAkidyW2yDpVWSvpump` |3,21 |
+
+O estado cifrado foi descarregado e autenticado. A análise identificou96colisões internas: o normalizador usava a mesma ID para saldo wSOL e movimento SOL nativo desconhecidos, revertendo o lote SQLite. A correção distingue o componente nativo apenas quando há colisão, conserva os restantes IDs e mantém ambos os custos/interpretações desconhecidos. O reprocessamento local de10570transações reais persistiu16452eventos, sem colisões, de forma idempotente. Os tempos originais e as fotografias anteriores foram preservados; este reprocessamento não fez novas consultas nem constitui uma nova captura de mercado.
+
+Depois da correção, as3carteiras continuam bloqueadas:2têm histórico parcial por atingir5000transações nas5páginas;1tem histórico Helius completo com570transações, mas uma divergência de quantidades entre as fontes. A atividade interpretada nas últimas24horas ficou confirmada nas3. Não se alteraram limiares para as fazer passar.
+
+O SQLite reprocessado ultrapassou o teto anterior de256MiB. O cofre experimental passou a usar compressão zlib sem perda antes da cifragem e um limite explícito de512MiB para o SQLite descomprimido. Na medição real,283,49MiB comprimiram para158,69MiB, com igualdade integral após descompressão. O hash continua a validar o SQLite original. O formato e o limite de256MiB do cofre principal permanecem iguais e compatíveis com o leitor da `main`; a compressão é ativada exclusivamente no cofre experimental. A recuperação valida tamanho, autenticação, hash, fim da compressão e integridade SQLite.
+
+A suíte local passou441testes, incluindo15novos casos para colisões SOL/wSOL e armazenamento comprimido, além dos49casos acrescentados no perfil inicial de7dias. Testes com fixtures verificam algoritmos; as contagens anteriores vêm da captura real e do reprocessamento explicitamente separado.

@@ -23,6 +23,7 @@ from state_vault import GitHub, TAG, Vault, VaultError
 
 EXPERIMENT_TAG = 'wallets-state-recent-7d'
 EXPERIMENT_BRANCH = 'feat/recent-7d'
+EXPERIMENT_MAX_STATE_BYTES = 512 * 1024 * 1024
 
 
 class ExperimentError(RuntimeError):
@@ -195,7 +196,8 @@ def main(argv=None):
         config = cli.load_config(args.config)
         key = os.environ['STATE_ENCRYPTION_KEY']
         result = run_experiment(args.production_db, args.db, args.output, config,
-                                Vault(key), Vault(key, ExperimentGitHub()))
+                                Vault(key), Vault(key, ExperimentGitHub(), compress_snapshot=True,
+                                                  max_state_bytes=EXPERIMENT_MAX_STATE_BYTES))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     except (ExperimentError, VaultError, OSError, ValueError, sqlite3.DatabaseError) as exc:
         # Mensagens livres da rede e valores de autenticação nunca são emitidos.

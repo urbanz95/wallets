@@ -455,8 +455,17 @@ def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None)
                 'scope': 'Transação observada e contas tocadas; não prova cobertura integral da carteira.'}
     events = []
 
-    def event(token, kind, quantity=ZERO, multi=False):
-        item = Event(f'helius:{signature}:{token}:{kind}', wallet, token, stamp, kind, quantity,
+    def event(token, kind, quantity=ZERO, multi=False, *, native=False):
+        identity = f'helius:{signature}:{token}:{kind}'
+        # SOL nativo e o saldo SPL de wSOL são componentes diferentes. Quando
+        # ambos ficam desconhecidos, a identidade legada colidia e revertia
+        # todo o lote persistido. Só desambiguar o componente nativo em colisão;
+        # os IDs históricos sem colisão permanecem iguais.
+        if (native and token == SOL and kind == 'unknown'
+                and any(previous.id == identity for previous in events)):
+            identity += ':native-sol'
+            limitations.append('Movimentos wSOL e SOL nativo mantidos separados; custos e interpretação continuam desconhecidos.')
+        item = Event(identity, wallet, token, stamp, kind, quantity,
                      tx_hash=signature, block=block, source='helius', multi_step=multi)
         if kind in ('buy', 'sell'):
             value = _matched_usd(item, swap_evidence)
@@ -492,7 +501,7 @@ def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None)
                 for mint in sorted(operation['mints']):
                     event(mint,'liquidity',_quantity(abs(deltas[mint]),decimals[mint]))
                 if adjusted_native:
-                    event(SOL,'unknown',_quantity(abs(adjusted_native),9),multi=True)
+                    event(SOL,'unknown',_quantity(abs(adjusted_native),9),multi=True,native=True)
                 evidence['liquidity_operations']=[operation]
                 evidence['instruction_coverage_complete']=not adjusted_native
                 limitations.append('Liquidez identificada por IDL; custo das parcelas e taxas USD continuam desconhecidos.')
@@ -526,7 +535,7 @@ def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None)
                 if adjusted_native:
                     # SOL desembolsado pode conter renda de contas ou fluxos
                     # adicionais. Não converter o total em custo exato do swap.
-                    event(SOL, 'unknown', _quantity(abs(adjusted_native), 9), multi=True)
+                    event(SOL, 'unknown', _quantity(abs(adjusted_native), 9), multi=True, native=True)
                     limitations.append('Fluxo SOL contém componentes não atribuídos; renda, taxas e custo USD não reconciliados.')
                 evidence['recognized_swaps'] = [selected]
                 evidence['recognized_buys'] = [base] if selected['kind'] == 'buy' else []
@@ -572,7 +581,7 @@ def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None)
                     if simple_transfer and system_net == adjusted_native:
                         event(SOL, 'transfer_in' if adjusted_native > 0 else 'transfer_out', _quantity(abs(adjusted_native), 9))
                     else:
-                        event(SOL, 'unknown', _quantity(abs(adjusted_native), 9), multi=True)
+                        event(SOL, 'unknown', _quantity(abs(adjusted_native), 9), multi=True, native=True)
                 if not events:
                     event(target_token or SOL, 'unknown', multi=True)
                 evidence['instruction_coverage_complete'] = simple_transfer and bool(active) and not adjusted_native

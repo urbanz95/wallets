@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import tempfile
 import uuid
+import zlib
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -117,7 +118,10 @@ def _set_generation(db, generation):
         con.execute('INSERT OR REPLACE INTO vault_checkpoint VALUES(1,?)', (generation,))
 
 
-def _snapshot(db):
+def _snapshot(db, max_bytes=None):
+    max_bytes = MAX_STATE_BYTES if max_bytes is None else max_bytes
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise VaultError('Limite de estado inválido.')
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'snapshot.sqlite'
         with sqlite3.connect(db) as source, sqlite3.connect(path) as target:
@@ -126,8 +130,10 @@ def _snapshot(db):
             target.execute('VACUUM')
             if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise VaultError('A base de dados não passou a verificação de integridade.')
+        if path.stat().st_size > max_bytes:
+            raise VaultError('Estado demasiado grande; requer manutenção antes de continuar.')
         raw = path.read_bytes()
-    if len(raw) > MAX_STATE_BYTES:
+    if len(raw) > max_bytes:
         raise VaultError('Estado demasiado grande; requer manutenção antes de continuar.')
     return raw
 
@@ -142,7 +148,13 @@ def _private_write(path, data):
 
 
 class Vault:
-    def __init__(self, key, github=None):
+    def __init__(self, key, github=None, *, compress_snapshot=False, max_state_bytes=None):
+        max_state_bytes = MAX_STATE_BYTES if max_state_bytes is None else max_state_bytes
+        if (type(compress_snapshot) is not bool or type(max_state_bytes) is not int
+                or max_state_bytes <= 0):
+            raise VaultError('Configuração de armazenamento inválida.')
+        self.compress_snapshot = compress_snapshot
+        self.max_state_bytes = max_state_bytes
         try:
             self.fernet = Fernet(key.encode() if isinstance(key, str) else key)
         except (ValueError, TypeError) as exc:
@@ -184,11 +196,17 @@ class Vault:
         # Atualizar antes de upload: uma falha ambígua exige restore; nunca prosseguir
         # para Telegram com uma reserva que não foi confirmada no armazenamento durável.
         _set_generation(db, generation)
-        raw = _snapshot(db)
+        raw = _snapshot(db, self.max_state_bytes)
+        stored = zlib.compress(raw, level=6) if self.compress_snapshot else raw
         body = {'schema': 1, 'generation': generation, 'parent': current,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'sha256': hashlib.sha256(raw).hexdigest(),
-                'database': base64.b64encode(raw).decode('ascii')}
+                'database': base64.b64encode(stored).decode('ascii')}
+        if self.compress_snapshot:
+            # O SHA refere-se sempre ao SQLite canónico, nunca à representação
+            # compactada. A produção mantém o envelope original sem estes campos.
+            body['database_encoding'] = 'zlib'
+            body['database_size'] = len(raw)
         encrypted = self.fernet.encrypt(json.dumps(body, sort_keys=True).encode())
         pending=db.with_suffix(db.suffix+'.pending.enc')
         _private_write(pending,encrypted)  # recuperação cifrada mesmo se o upload falhar
@@ -211,16 +229,32 @@ class Vault:
             raise VaultError('Estado remoto ausente. Primeiro arranque exige initialize_state manual.')
         asset = latest_asset(release)
         encrypted = self.github.download(asset)
-        if not encrypted or len(encrypted) > 2 * MAX_STATE_BYTES:
+        if not encrypted or len(encrypted) > 2 * self.max_state_bytes:
             raise VaultError('Snapshot ausente ou demasiado grande.')
         try:
             body = json.loads(self.fernet.decrypt(encrypted))
-            raw = base64.b64decode(body['database'], validate=True)
-        except (InvalidToken, ValueError, KeyError, TypeError) as exc:
+            if not isinstance(body, dict):
+                raise ValueError('Envelope inválido')
+            stored = base64.b64decode(body['database'], validate=True)
+            encoding = body.get('database_encoding')
+            if encoding is None:
+                raw = stored
+            elif encoding == 'zlib':
+                expected = body['database_size']
+                if type(expected) is not int or not 0 < expected <= self.max_state_bytes:
+                    raise ValueError('Tamanho descompactado inválido')
+                decoder = zlib.decompressobj()
+                raw = decoder.decompress(stored, self.max_state_bytes + 1)
+                if (len(raw) != expected or len(raw) > self.max_state_bytes
+                        or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail):
+                    raise ValueError('Estado compactado incompleto, divergente ou excessivo')
+            else:
+                raise ValueError('Codificação de estado desconhecida')
+        except (InvalidToken, ValueError, KeyError, TypeError, zlib.error) as exc:
             raise VaultError('Não foi possível autenticar/decifrar o estado. Não será reinicializado.') from exc
         if (body.get('schema') != 1 or body.get('generation') != asset['name']
                 or hashlib.sha256(raw).hexdigest() != body.get('sha256')
-                or len(raw) > MAX_STATE_BYTES):
+                or len(raw) > self.max_state_bytes):
             raise VaultError('Integridade do snapshot inválida.')
         db.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=db.parent) as directory:
