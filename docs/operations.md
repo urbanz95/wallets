@@ -12,7 +12,7 @@ Guarda a chave do cofre num gestor de palavras-passe e no secret `STATE_ENCRYPTI
 
 Em **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow**, marque `initialize_state` uma única vez. O cofre usa o release `wallets-state` neste mesmo repositório. Se já existir, o programa recusa voltar a inicializar, mesmo que esteja vazio ou corrompido.
 
-Para o primeiro teste de acesso, marca também `probe_only`, fornece um endereço público em `wallet` e mantém `notify` desmarcado. São feitas apenas duas consultas controladas, sem análises ou Telegram. Nas execuções seguintes, deixa `initialize_state` desmarcado; desmarca também `probe_only` para a análise completa.
+Para o primeiro teste de acesso, marca também `probe_only`, fornece um endereço público em `wallet` e mantém `notify` desmarcado. São feitas apenas duas consultas controladas, sem análises ou Telegram. Para diagnosticar contratos de carteira, `probe_contracts` executa apenas quatro consultas Birdeye (82 CU reservados; uma por endpoint, sem retentativas), exige `wallet` e também impede análise e Telegram. Não é necessário marcar as duas opções. Nas execuções seguintes, deixa `initialize_state` desmarcado; desmarca também `probe_only` para a análise completa.
 
 A rotina é sequencial:
 

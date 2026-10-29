@@ -108,11 +108,31 @@ class StateVaultTests(unittest.TestCase):
 
     def test_remote_asset_listing_is_paginated(self):
         github = module.GitHub()
-        replies = [b'{"id":123,"assets":[]}', b'[[{"id":1}],[{"id":2}]]']
+        replies = [b'{"id":123,"assets":[]}', b'[{"id":1}]\n[{"id":2}]\n']
         with patch.object(github, 'command', side_effect=replies) as command:
             release = github.release()
         self.assertEqual([asset['id'] for asset in release['assets']], [1, 2])
         self.assertIn('--paginate', command.call_args_list[1].args[0])
+        self.assertNotIn('--slurp', command.call_args_list[1].args[0])
+
+    def test_remote_asset_pagination_accepts_empty_array_but_not_empty_response(self):
+        github = module.GitHub()
+        with patch.object(github, 'command', side_effect=[b'{"id":123}', b'[]']):
+            self.assertEqual(github.release()['assets'], [])
+        for invalid in (b'', b' \n\t', b'null', b'{}', b'[null]', b'[[{"id":1}]]'):
+            with self.subTest(invalid=invalid):
+                with patch.object(github, 'command', side_effect=[b'{"id":123}', invalid]):
+                    with self.assertRaises(module.VaultError):
+                        github.release()
+
+    def test_malformed_later_asset_page_blocks_instead_of_returning_older_assets(self):
+        github = module.GitHub()
+        for invalid in (b'[{"id":1}]\n[{"id":2}', b'[{"id":1}]garbage',
+                        b'[{"id":1}]\n{"id":2}', b'[{"id":1}]\n[2]', b'[{"id":1}]\xff'):
+            with self.subTest(invalid=invalid):
+                with patch.object(github, 'command', side_effect=[b'{"id":123}', invalid]):
+                    with self.assertRaises(module.VaultError):
+                        github.release()
 
     def test_checkpoint_does_not_require_plaintext_artifact(self):
         self.vault.init(self.db)

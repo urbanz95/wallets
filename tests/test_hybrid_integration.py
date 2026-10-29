@@ -261,7 +261,7 @@ class HybridIntegrationTests(unittest.TestCase):
             if path=='/trader/txs/seek_by_time':return {'success':True,'data':{'items':[{'tx_hash':'same','owner':SOL,'ins_index':0,'inner_ins_index':0,'block_unix_time':int(AT.timestamp()),'block_number':100,'tx_type':'swap','volume_usd':'2','base':{'address':USDC,'amount':'2000000','decimals':6,'type_swap':'from','price':'1'},'quote':{'address':MEME,'amount':'1000000','decimals':6,'type_swap':'to','price':'2'}}],'hasNext':False}}
             if path=='/wallet/v2/transfer':return {'success':True,'data':[]}
             if path=='/wallet/v2/pnl/details':return {'success':True,'data':{'tokens':[],'summary':{'unique_tokens':0}}}
-            if path=='/wallet/v2/current-net-worth':return {'success':True,'data':{'items':[],'total':0,'current_timestamp':int(NOW.timestamp())}}
+            if path=='/wallet/v2/current-net-worth':return {'success':True,'data':{'items':[],'current_timestamp':int(NOW.timestamp())},'pagination':{'total':0}}
             if path=='/blockchain/v1/transaction/detail':return {'success':True,'data':{'block_time':int(AT.timestamp()),'fee':5000,'priority_fee':0,'status':{}}}
             raise AssertionError(path)
         def h_transport(request):

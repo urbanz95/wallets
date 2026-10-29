@@ -30,7 +30,7 @@ class FakeClient:
             return {'success': True, 'data': {'tokens': [], 'summary': {'unique_tokens': 0}}}
         if path == '/wallet/v2/transfer': return {'success': True, 'data': []}
         if path == '/wallet/v2/current-net-worth':
-            return {'success': True, 'data': {'items': [], 'total': 0, 'current_timestamp': int(NOW.timestamp())}}
+            return {'success': True, 'data': {'items': [], 'current_timestamp': int(NOW.timestamp())}, 'pagination': {'total': 0}}
         raise AssertionError(path)
 
 class CollectionTests(unittest.TestCase):
@@ -176,3 +176,41 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(events,[])
         self.assertTrue(coverage.failures)
         self.assertIsNone(self.store.get_cursor('trader:'+WALLET))
+
+
+class HoldingsPaginationTests(unittest.TestCase):
+    setUp = CollectionTests.setUp
+    tearDown = CollectionTests.tearDown
+    collector = CollectionTests.collector
+    def test_official_root_pagination_collects_every_page(self):
+        client = FakeClient()
+        def request(method, path, params=None, body=None, **kwargs):
+            offset = params['offset']
+            return {'success': True, 'data': {'items': [{'address': token} for token in
+                    ([T1, T2] if offset == 0 else [T3])]},
+                    'pagination': {'offset': offset, 'limit': 2, 'total': 3}}
+        client.request = request
+        rows, complete, _ = self.collector(client)._paged('/wallet/v2/current-net-worth', 'GET',
+                                                         {'wallet': WALLET}, 'items', page_size=2)
+        self.assertEqual([row['address'] for row in rows], [T1, T2, T3])
+        self.assertTrue(complete)
+
+    def test_missing_or_inconsistent_root_total_never_proves_inventory_complete(self):
+        for pagination in (None, {'total': True}, {'total': -1}, {'total': '1'}, {'total': 0}):
+            client = FakeClient()
+            client.request = lambda *args, **kwargs: {'success': True,
+                'data': {'items': [{'address': T1}], 'total': 1}, 'pagination': pagination}
+            with self.subTest(pagination=pagination):
+                _, complete, _ = self.collector(client)._paged('/wallet/v2/current-net-worth', 'GET',
+                                                               {'wallet': WALLET}, 'items')
+                self.assertFalse(complete)
+
+    def test_changing_total_between_pages_is_incomplete(self):
+        client = FakeClient()
+        def request(method, path, params=None, body=None, **kwargs):
+            return {'success': True, 'data': {'items': [{'address': T1}]},
+                    'pagination': {'total': 2 if params['offset'] == 0 else 3}}
+        client.request = request
+        _, complete, _ = self.collector(client)._paged('/wallet/v2/current-net-worth', 'GET',
+                                                       {'wallet': WALLET}, 'items', page_size=1)
+        self.assertFalse(complete)

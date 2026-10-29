@@ -10,7 +10,7 @@ O plano **Standard** é gratuito, com **30 000 CU por mês**, **1 pedido por seg
 
 A [matriz de acesso](https://data.birdeye.so/docs/guides/data-accessibility-by-packages), com efeito indicado de 26-11-2025, inclui tokens, traders, operações, transferências, património e PnL em Standard. Por isso a descoberta de candidatas **é possível documentalmente**. Isso **não basta para aprovar**: lacunas de inventário, taxas, falhas, cobertura de transações, coordenação ou execução continuam a bloquear as verificações respetivas.
 
-**Validação autenticada:** nenhuma foi realizada durante esta pesquisa; não havia uma chave Birdeye configurada. A confirmação efetiva de acesso exige a chave Standard do utilizador e poucas consultas controladas. Um 403/401/429 não pode converter-se em aprovação nem desencadear consulta a outro fornecedor.
+**Validação autenticada:** a sondagem de 28-10-2026 confirmou acesso ao endpoint gratuito de posições (um pedido, 30 CU). A análise de 29-10-2026 confirmou descoberta de candidatas, mas registou erros HTTP400/422 e formatos incompatíveis em parte da recolha; não confirma todos os contratos nem a cobertura integral. A [entrega](delivery.md) distingue estes resultados da pesquisa documental inicial, realizada sem chave. Um 403/401/429 não pode converter-se em aprovação nem desencadear consulta a outro fornecedor.
 
 ## Tabela de capacidades
 
@@ -86,7 +86,7 @@ Todos usam `https://public-api.birdeye.so`. Os métodos e nomes de parâmetros a
 - `GET /wallet/v2/current-net-worth`: **30 CU/pedido**.
 - `wallet`, `sort_by=value`, `sort_type`, `limit` até 100, `offset` até 10 000, **`flags=include_low_liquidity`**. O comportamento por defeito exclui tokens com liquidez inferior a 100 USD; seria incorreto usá-lo para avaliar perdas abertas.
 - Não aplicar `filter_value` na análise da carteira.
-- `data.items`, `data.total`, `data.current_timestamp`; campos de posição incluem endereço, decimais, saldo bruto, montante, preço e valor. Aceitar somente formatos e variantes documentados.
+- `data.items`, **`pagination.total` no topo da resposta**, `data.current_timestamp`; campos de posição incluem endereço, decimais, saldo bruto, montante, preço e valor. Aceitar somente formatos e variantes documentados.
 - `items` ausente, nulo ou inválido significa inventário indisponível. Comparar total e linhas observadas; uma última página não prova que as anteriores tenham sido recolhidas.
 - Não pressupor que um token sem preço vale zero nem que o preço spot permita liquidar a posição completa.
 
@@ -134,4 +134,4 @@ Na integração Birdeye, o recolhedor nunca declara cobertura integral, inventá
 
 Cada verificação obrigatória permanece obrigatória. Sempre que o conjunto gratuito efetivamente recolhido não sustenta taxas, custo, inventário, risco de automatização ou possibilidade de acompanhar com cobertura suficiente, o estado é **INDETERMINADA**. Zero carteiras aprovadas é um resultado válido. Não se enviam candidatas, erros ou explicações de limitações pelo Telegram.
 
-Não há resultados reais de rentabilidade nem acompanhamento real validado nesta entrega sem chave e recolha posterior. Fixtures verificam os algoritmos e bloqueios, não certificam disponibilidade da API nem carteiras reais.
+Há recolha real parcial, mas não há rentabilidade validada nem acompanhamento real do desempenho de carteiras aprovadas. Fixtures verificam os algoritmos e bloqueios, não certificam disponibilidade da API nem carteiras reais.

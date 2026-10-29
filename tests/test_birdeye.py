@@ -1,4 +1,5 @@
 import unittest
+import json
 from datetime import datetime, timezone
 from io import BytesIO
 from urllib.error import HTTPError, URLError
@@ -93,3 +94,50 @@ class ClientTests(unittest.TestCase):
         result = client.request('POST', '/wallet/v2/pnl/details', body={'wallet': 'A'*44})
         self.assertEqual(result['data']['tokens'], [])
         with self.assertRaises(InvalidResponse): client.request('GET', '/defi/v3/token/list')
+
+    def test_validation_diagnostic_preserves_only_contract_names_codes_and_numeric_bounds(self):
+        error_body={'detail':[
+            {'loc':['query','limit'],'type':'less_than_equal','msg':'PRIVATE-MESSAGE',
+             'input':'PRIVATE-INPUT','ctx':{'le':50,'private':'PRIVATE-CTX','max_length':False}},
+            {'loc':['body','wallet'],'type':'string_type','input':'PRIVATE-WALLET'},
+            {'loc':['query','PRIVATE-LOCATION'],'type':'bad-code/PRIVATE-TYPE'},
+        ],'message':'PRIVATE-FREE-MESSAGE'}
+        def transport(request):
+            raise HTTPError(request.full_url,422,'PRIVATE-REASON',{},BytesIO(json.dumps(error_body).encode()))
+        client=self.client(transport)
+        with self.assertRaises(BirdeyeError) as failure:
+            client.request('POST','/wallet/v2/pnl/details',{'limit':100},body={'wallet':'PRIVATE-WALLET'})
+        text=str(failure.exception)
+        self.assertIn('POST /wallet/v2/pnl/details',text)
+        self.assertIn('less_than_equal',text)
+        self.assertIn('"le": 50',text)
+        self.assertIn('"wallet"',text)
+        self.assertNotIn('PRIVATE-',text)
+        self.assertNotIn('max_length',text)
+        self.assertNotIn('?',text)
+        self.assertEqual(client.requests,1)
+
+    def test_validation_diagnostic_ignores_free_text_oversized_or_malformed_bodies(self):
+        for body in (b'{"detail":"PRIVATE-TEXT"}',b'PRIVATE-NOT-JSON',b'x'*20000):
+            with self.subTest(size=len(body)):
+                def transport(request):
+                    raise HTTPError(request.full_url,400,'PRIVATE-REASON',{},BytesIO(body))
+                client=self.client(transport)
+                with self.assertRaises(BirdeyeError) as failure:
+                    client.request('GET','/trader/txs/seek_by_time',{'address':'PRIVATE-WALLET'})
+                self.assertIn('GET /trader/txs/seek_by_time',str(failure.exception))
+                self.assertNotIn('PRIVATE-',str(failure.exception))
+                self.assertNotIn('Validação:',str(failure.exception))
+
+    def test_validation_diagnostic_cannot_echo_api_key_in_type_or_unbounded_context(self):
+        body={'detail':[{'loc':['query','limit'],'type':'secret',
+                         'ctx':{'le':float('inf'),'ge':True,'maximum':10**50,'lt':3}}]}
+        def transport(request):
+            raise HTTPError(request.full_url,422,'PRIVATE',{},BytesIO(json.dumps(body).encode()))
+        client=self.client(transport);client.api_key='secret'
+        with self.assertRaises(BirdeyeError) as failure:
+            client.request('GET','/wallet/v2/current-net-worth',{'limit':100})
+        text=str(failure.exception)
+        self.assertNotIn('secret',text)
+        self.assertIn('"lt": 3',text)
+        for field in ('"le"','"ge"','"maximum"'):self.assertNotIn(field,text)

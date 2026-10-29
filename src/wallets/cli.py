@@ -202,7 +202,101 @@ def demo(args,config):
     return 0
 
 
+def _probe_structure(result):
+    """Só tipos, chaves estáticas e contagens; nunca valores remotos de identidade."""
+    def kind(value):
+        if value is None:return 'null'
+        if isinstance(value,bool):return 'boolean'
+        if isinstance(value,(int,float,Decimal)):return 'number'
+        if isinstance(value,str):return 'string'
+        if isinstance(value,list):return 'array'
+        if isinstance(value,dict):return 'object'
+        return 'invalid'
+    known_root=('success','data','pagination','next_cursor','detail')
+    known_data=('items','tokens','summary','meta','total','current_timestamp',
+                'wallet','wallet_address','currency','total_value','hasNext','has_next')
+    known_item=('address','wallet','owner','tx_hash','block_unix_time','unix_time',
+                'base','quote','from','to','token_address','amount','balance','price',
+                'value','decimals','counts','quantity','cashflow_usd','pnl','pricing')
+    shape={'root_type':kind(result)}
+    if not isinstance(result,dict):return shape
+    shape['root_fields']={name:kind(result[name]) for name in known_root if name in result}
+    shape['unknown_root_fields']=len(set(result)-set(known_root))
+    data=result.get('data')
+    if isinstance(data,dict):
+        shape['data_fields']={name:kind(data[name]) for name in known_data if name in data}
+        shape['unknown_data_fields']=len(set(data)-set(known_data))
+        for name in ('items','tokens'):
+            rows=data.get(name)
+            if isinstance(rows,list):
+                shape[name+'_count']=len(rows)
+                shape[name+'_row_types']=sorted(set(kind(row) for row in rows))
+                if rows and isinstance(rows[0],dict):
+                    shape[name+'_first_row_fields']={field:kind(rows[0][field]) for field in known_item if field in rows[0]}
+                    shape[name+'_first_row_unknown_fields']=len(set(rows[0])-set(known_item))
+    elif isinstance(data,list):
+        shape['data_count']=len(data)
+        shape['data_row_types']=sorted(set(kind(row) for row in data))
+    pagination=result.get('pagination')
+    if isinstance(pagination,dict):
+        shape['pagination_fields']={name:kind(pagination[name]) for name in ('limit','offset','total') if name in pagination}
+    return shape
+
+
+def _probe_contract_shape(path,result):
+    data=result.get('data') if isinstance(result,dict) else None
+    if path=='/wallet/v2/transfer':return isinstance(data,list) and all(isinstance(row,dict) for row in data)
+    field='tokens' if path=='/wallet/v2/pnl/details' else 'items'
+    if not isinstance(data,dict) or not isinstance(data.get(field),list):return False
+    if any(not isinstance(row,dict) for row in data[field]):return False
+    if path=='/wallet/v2/current-net-worth':
+        pagination=result.get('pagination')
+        return isinstance(pagination,dict) and type(pagination.get('total')) is int and pagination['total']>=0
+    return True
+
+
+def probe_contracts(args,config):
+    """Até quatro leituras gratuitas, sem retentativas, avaliações ou notificações."""
+    if args.provider!='birdeye':raise ValueError('--contracts só suporta --provider birdeye')
+    key=os.environ.get('BIRDEYE_API_KEY')
+    if not key:
+        print('BIRDEYE_API_KEY não configurada; contratos não verificados. Nenhum pedido efetuado.')
+        return 2
+    if not args.wallet:raise ValueError('probe --contracts exige --wallet')
+    checkpoint=checkpoint_for(args)
+    end=utcnow();start=end-timedelta(days=config['lookback_days'])
+    requests=(
+        ('GET','/trader/txs/seek_by_time',{'address':args.wallet,'after_time':int(start.timestamp()),
+            'before_time':int(end.timestamp()),'tx_type':'all','ui_amount_mode':'raw','offset':0,'limit':1}),
+        ('POST','/wallet/v2/transfer',{'wallet':args.wallet,'time_from':int(start.timestamp()),'time_to':int(end.timestamp()),'limit':1}),
+        ('POST','/wallet/v2/pnl/details',{'wallet':args.wallet,'duration':'all','pnl_method':'wac',
+            'position_scope':'cumulative','sort_by':'last_trade','sort_type':'desc','offset':0,'limit':1}),
+        ('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity',
+            'sort_by':'value','sort_type':'desc','offset':0,'limit':1}),
+    )
+    api=dict(config['api'],max_requests_per_run=4,max_retries=0,max_credits_per_run=82)
+    failed=False
+    with process_lock(args.db),Store(args.db) as store:
+        if args.checkpoint_command and not store.prepay_run(end.strftime('%Y-%m'),82,api['monthly_credit_ceiling'],checkpoint):
+            raise ValueError('Quota mensal local insuficiente para sondagem de contratos')
+        client=BirdeyeClient(key,store,api)
+        for method,path,query in requests:
+            try:
+                result=client.request(method,path,query if method=='GET' else None,query if method=='POST' else None,cache=False)
+                print(f'Contrato {method} {path}: '+dumps(_probe_structure(result)),flush=True)
+                if not _probe_contract_shape(path,result):
+                    failed=True
+                    print('Estrutura obrigatória do contrato indisponível; cobertura não confirmada.',flush=True)
+            except BirdeyeError as exc:
+                failed=True
+                print(str(exc),file=sys.stderr,flush=True)
+            finally:checkpoint()
+    print('Sondagem de contratos concluída: no máximo 4 pedidos e 82 CU; sem avaliação de carteiras nem Telegram.',flush=True)
+    return 2 if failed else 0
+
+
 def probe(args,config):
+    if getattr(args,'contracts',False):return probe_contracts(args,config)
     providers=('birdeye','helius') if args.provider=='both' else (args.provider,)
     available={name:os.environ.get('BIRDEYE_API_KEY' if name=='birdeye' else 'HELIUS_API_KEY') for name in providers}
     if not any(available.values()):
@@ -224,7 +318,7 @@ def probe(args,config):
             try:
                 if name=='birdeye':
                     client=BirdeyeClient(available[name],store,api)
-                    client.request('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity','limit':1,'offset':0},cache=False)
+                    client.request('GET','/wallet/v2/current-net-worth',{'wallet':args.wallet,'flags':'include_low_liquidity','sort_type':'desc','limit':1,'offset':0},cache=False)
                     print('Acesso confirmado ao endpoint gratuito Birdeye de posições: 1 pedido, 30 CU. Não comprova os restantes endpoints nem aprova a carteira.')
                 else:
                     client=HeliusClient(available[name],store,api)
@@ -245,6 +339,7 @@ def main(argv=None):
             p.add_argument('--wallet',action='append',default=[]);p.add_argument('--token',action='append',default=[]);p.add_argument('--notify',action='store_true')
         if name=='probe':
             p.add_argument('--wallet');p.add_argument('--provider',choices=('birdeye','helius','both'),default='birdeye')
+            p.add_argument('--contracts',action='store_true',help='Até quatro consultas Birdeye sem retentativas, só diagnóstico estrutural e sem Telegram')
         if name=='followup':
             p.add_argument('--selection',required=True);p.add_argument('--as-of')
     args=parser.parse_args(argv)

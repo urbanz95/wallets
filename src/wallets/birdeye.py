@@ -4,6 +4,8 @@ from datetime import timedelta
 from decimal import Decimal
 from hashlib import sha256
 import json
+import math
+import re
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -20,6 +22,60 @@ ENDPOINTS = {
     ('GET', '/wallet/v2/current-net-worth'): 30,
     ('GET', '/blockchain/v1/transaction/detail'): 10,
 }
+
+# Só nomes de contrato, nunca valores enviados ou mensagens livres da API.
+VALIDATION_FIELDS = frozenset({
+    'address', 'wallet', 'after_time', 'before_time', 'tx_type', 'ui_amount_mode',
+    'offset', 'limit', 'time_from', 'time_to', 'duration', 'pnl_method',
+    'position_scope', 'sort_by', 'sort_type', 'flags', 'cursor', 'token_addresses',
+    'platform_name', 'min_liquidity', 'min_volume_24h_usd',
+    'min_price_change_24h_percent', 'min_recent_listing_time',
+    'max_recent_listing_time', 'time_frame', 'signature',
+})
+VALIDATION_BOUND_FIELDS = frozenset({
+    'ge', 'gt', 'le', 'lt', 'minimum', 'maximum', 'min_length', 'max_length',
+    'min_items', 'max_items', 'limit_value',
+})
+
+
+def validation_diagnostic(error, request_fields, secret):
+    """Extrai exclusivamente localização/código/limites de validação estruturada."""
+    try:
+        raw = error.read(16385)
+        if len(raw) > 16384:
+            return ''
+        body = json.loads(raw)
+        details = body.get('detail') if isinstance(body, dict) else None
+        if not isinstance(details, list):
+            return ''
+        allowed = (set(request_fields) & VALIDATION_FIELDS) | {'query', 'body', 'index'}
+        safe = []
+        for detail in details[:8]:
+            if not isinstance(detail, dict):
+                continue
+            entry = {}
+            loc = detail.get('loc')
+            if isinstance(loc, (list, tuple)) and 0 < len(loc) <= 8:
+                if all((isinstance(part, str) and part in allowed)
+                       or (type(part) is int and 0 <= part <= 1000000) for part in loc):
+                    entry['loc'] = list(loc)
+            kind = detail.get('type')
+            if isinstance(kind, str) and re.fullmatch('[a-z_]{1,64}', kind):
+                if not secret or secret not in kind:
+                    entry['type'] = kind
+            ctx = detail.get('ctx')
+            if isinstance(ctx, dict):
+                bounds = {key: value for key, value in ctx.items()
+                          if key in VALIDATION_BOUND_FIELDS and type(value) in (int, float)
+                          and math.isfinite(value) and abs(value) <= 1000000000000}
+                if bounds:
+                    entry['ctx'] = bounds
+            if entry:
+                safe.append(entry)
+        return ' Validação: '+dumps(safe)+'.' if safe else ''
+    except (OSError, ValueError, TypeError, OverflowError):
+        return ''
+
 
 class BirdeyeError(RuntimeError):
     """Mensagem segura: nunca contém credenciais, cabeçalhos ou corpo remoto."""
@@ -108,7 +164,7 @@ class BirdeyeClient:
                 status = exc.code
                 if status in (401, 402, 403):
                     self._halted = True
-                    raise AccessDenied(f'Birdeye recusou acesso ({status}); sem alternativa de fornecedor/plano.') from None
+                    raise AccessDenied(f'Birdeye recusou acesso ({status}) em {method} {path}; sem alternativa de fornecedor/plano.') from None
                 if status == 429 or status >= 500:
                     if attempt < self.config.get('max_retries', 2):
                         retry = exc.headers.get('Retry-After', '') if exc.headers else ''
@@ -120,7 +176,8 @@ class BirdeyeClient:
                         continue
                 if status == 429:
                     self._halted = True
-                raise BirdeyeError(f'Falha HTTP Birdeye ({status}); análise incompleta.') from None
+                diagnostic = validation_diagnostic(exc, set(params or {}) | set(body or {}), self.api_key) if status in (400, 422) else ''
+                raise BirdeyeError(f'Falha HTTP Birdeye ({status}) em {method} {path}; análise incompleta.'+diagnostic) from None
             except (URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError):
                 if attempt < self.config.get('max_retries', 2):
                     self.sleep(min(30, 2 ** attempt))

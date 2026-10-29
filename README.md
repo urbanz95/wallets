@@ -80,9 +80,9 @@ Os limites em [`config.toml`](config.toml) são **heurísticas conservadoras**, 
 |---|---|
 | Implementado | Descoberta, recolha e reconciliação conservadora Birdeye/Helius, contabilidade, métricas, oito gates, relatórios, Telegram condicionado e persistência cifrada |
 | Testes com fixtures/mocks | Exercitam cálculos, normalização, paginação, quotas, falhas, proveniência, bloqueios Telegram e recuperação; não certificam dados reais |
-| Dados reais | A documentação oficial foi consultada; o acesso autenticado fica pendente das chaves e da sondagem. Não são enviados testes Telegram |
+| Dados reais | Acesso autenticado Birdeye/Helius confirmado; análise de29-10-2026 recuperada do cofre:10 carteiras avaliadas, zero aprovadas. Persistem lacunas de cobertura e erros de contrato; ver [entrega](docs/delivery.md) |
 | Limitações | Contratos e histórico recolhido podem ser insuficientes. Falta de dados nunca se transforma em aprovação |
-| Falta configurar | Os cinco segredos, primeiro arranque do cofre e confirmação de acesso gratuito |
+| Configuração desta instalação | Secrets adicionados pelo utilizador e cofre inicializado. Não voltar a marcar initialize_state; guardar uma cópia da chave. Entrega Telegram real ainda não testada por não existir carteira elegível |
 
 O [acompanhamento posterior](docs/validation.md) guarda observações separadas das seleções imutáveis, sem usar informação futura e sem atribuir ao seguidor o preço original da carteira. Não há simulador de copy trading.
 

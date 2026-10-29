@@ -188,6 +188,7 @@ class Collector:
 
     def _paged(self, path, method, params, field, page_size=100):
         rows = []
+        holdings_total = None
         for page in range(self.max_pages):
             query = dict(params, offset=page * page_size, limit=page_size)
             result = self.client.request(method, path, query if method == 'GET' else None,
@@ -195,8 +196,13 @@ class Collector:
             items, meta = self._items(result, field)
             rows.extend(items)
             if path == '/wallet/v2/current-net-worth':
-                total = meta.get('total')
-                if isinstance(total, int) and total >= len(rows) and len(rows) >= total:
+                pagination = result.get('pagination')
+                total = pagination.get('total') if isinstance(pagination, dict) else None
+                if (isinstance(total, bool) or not isinstance(total, int) or total < 0
+                        or total < len(rows) or (holdings_total is not None and total != holdings_total)):
+                    return rows, False, meta
+                holdings_total = total
+                if len(rows) == total:
                     return rows, True, meta
                 more = True
             else:

@@ -13,6 +13,10 @@ on:
         description: 'Só confirmar acesso gratuito com consultas mínimas; não analisar nem enviar Telegram'
         type: boolean
         default: false
+      probe_contracts:
+        description: 'Só diagnosticar contratos Birdeye: quatro consultas, sem análise nem Telegram'
+        type: boolean
+        default: false
       wallet:
         description: 'Endereço público Solana opcional para análise manual; nunca um segredo'
         type: string
@@ -56,19 +60,22 @@ jobs:
         id: restore
         run: python scripts/state_vault.py restore --db state/wallets.sqlite
       - name: Confirmar acesso gratuito com consultas mínimas e sem Telegram
-        if: github.event_name == 'workflow_dispatch' && inputs.probe_only
+        if: github.event_name == 'workflow_dispatch' && (inputs.probe_only || inputs.probe_contracts)
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           PROBE_WALLET: ${{ inputs.wallet }}
+          PROBE_CONTRACTS: ${{ inputs.probe_contracts }}
         shell: bash
         run: |
           test -n "$PROBE_WALLET" || { echo 'A sondagem exige o campo wallet com um endereço público Solana'; exit 1; }
-          python -m wallets.cli probe --provider both --wallet "$PROBE_WALLET" \
+          probe_args=(--provider both)
+          if [ "$PROBE_CONTRACTS" = true ]; then probe_args=(--provider birdeye --contracts); fi
+          python -m wallets.cli probe "${probe_args[@]}" --wallet "$PROBE_WALLET" \
             --config config.toml --db state/wallets.sqlite \
             --checkpoint-command "python scripts/state_vault.py save --db state/wallets.sqlite"
       - name: Recolher e avaliar; reservar quota de forma durável antes da rede
-        if: github.event_name != 'workflow_dispatch' || !inputs.probe_only
+        if: github.event_name != 'workflow_dispatch' || (!inputs.probe_only && !inputs.probe_contracts)
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
@@ -82,7 +89,7 @@ jobs:
       - name: Guardar análises antes de qualquer envio
         run: python scripts/state_vault.py save --db state/wallets.sqlite
       - name: Telegram só após nova verificação de elegibilidade
-        if: (github.event_name == 'schedule' || inputs.notify) && !inputs.probe_only
+        if: (github.event_name == 'schedule' || inputs.notify) && !inputs.probe_only && !inputs.probe_contracts
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

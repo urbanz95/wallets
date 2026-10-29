@@ -3,7 +3,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from io import StringIO
+from io import StringIO, BytesIO
 import csv
 import json
 import os
@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
+from urllib.error import HTTPError
 
 from wallets import cli
 from wallets.birdeye import BirdeyeClient, BudgetExceeded, BirdeyeError
@@ -145,11 +146,11 @@ class CLITests(unittest.TestCase):
     def test_probe_makes_only_one_mocked_free_endpoint_request(self):
         with patch.dict(os.environ, {'BIRDEYE_API_KEY':'mock-private-key'}), \
              patch('wallets.cli.BirdeyeClient') as factory:
-            factory.return_value.request.return_value = {'success':True,'data':{'items':[],'total':0}}
+            factory.return_value.request.return_value = {'success':True,'data':{'items':[]},'pagination':{'limit':1,'offset':0,'total':0}}
             code, out, err = self.call('probe','--wallet',SOL)
         self.assertEqual((code,err),(0,''))
         factory.return_value.request.assert_called_once_with('GET','/wallet/v2/current-net-worth',
-            {'wallet':SOL,'flags':'include_low_liquidity','limit':1,'offset':0},cache=False)
+            {'wallet':SOL,'flags':'include_low_liquidity','sort_type':'desc','limit':1,'offset':0},cache=False)
         config = factory.call_args.args[2]
         self.assertEqual((config['max_requests_per_run'],config['max_retries'],config['max_credits_per_run']),(1,0,30))
         self.assertNotIn('mock-private-key',out+err)
@@ -266,7 +267,7 @@ class CLITests(unittest.TestCase):
             if parsed.path=='/wallet/v2/transfer':return {'success':True,'data':[]}
             if parsed.path=='/wallet/v2/pnl/details':return {'success':True,'data':{'tokens':[],'summary':{'unique_tokens':0}}}
             if parsed.path=='/wallet/v2/current-net-worth':
-                return {'success':True,'data':{'items':[{'address':MEME,'price':40,'amount':2}], 'total':1,'current_timestamp':int(NOW.timestamp())}}
+                return {'success':True,'data':{'items':[{'address':MEME,'price':40,'amount':2}], 'current_timestamp':int(NOW.timestamp())},'pagination':{'limit':100,'offset':0,'total':1}}
             if parsed.path=='/blockchain/v1/transaction/detail':
                 self.assertEqual(query['signature'],['mock-tx'])
                 return {'success':True,'data':{'block_time':trade_time,'fee':5000,'priority_fee':1000,'status':{}}}
@@ -292,3 +293,110 @@ class CLITests(unittest.TestCase):
         self.assertTrue(all(c['status']!='APROVADA' for c in result['checks']))
         self.assertEqual(result['discovery_tokens'],[MEME])
         self.assertNotIn('mock-key-never-publish',json.dumps(report)+out+err)
+
+    def test_contract_probe_reserves_all_quota_before_network_and_only_reports_structure(self):
+        order=[];calls=[]
+        def checkpoint():
+            order.append('save')
+            with Store(self.db) as state:
+                self.assertEqual(state.db.execute('SELECT credits FROM budgets').fetchone()[0],82)
+                self.assertEqual(state.latest_evaluations(),[])
+        def transport(request):
+            self.assertTrue(order)
+            order.append('request');calls.append(request)
+            path=urlsplit(request.full_url).path
+            if path=='/wallet/v2/transfer':return {'success':True,'data':[{'token_address':'PRIVATE-TOKEN','tx_hash':'PRIVATE-TX'}]}
+            if path=='/wallet/v2/pnl/details':return {'data':{'tokens':[{'address':'PRIVATE-TOKEN','pnl':{'secret':'PRIVATE-PNL'}}]}}
+            return {'success':True,'data':{'items':[{'owner':'PRIVATE-WALLET','address':'PRIVATE-TOKEN'}]},
+                    'pagination':{'limit':1,'offset':0,'total':1},'PRIVATE-FIELD':'PRIVATE-VALUE'}
+        clients=[]
+        def factory(key,store,config):
+            client=BirdeyeClient(key,store,config,transport=transport,clock=lambda:NOW,sleep=lambda _:None)
+            clients.append(client);return client
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}), \
+             patch('wallets.cli.BirdeyeClient',side_effect=factory), \
+             patch('wallets.cli.checkpoint_for',return_value=checkpoint), \
+             patch('wallets.cli.Notifier') as notifier:
+            code,out,err=self.call('probe','--contracts','--wallet',SOL,'--checkpoint-command','mock-save')
+        self.assertEqual((code,err),(0,''))
+        self.assertEqual(order,['save','request','save','request','save','request','save','request','save'])
+        self.assertEqual((clients[0].requests,clients[0].credits),(4,82))
+        self.assertNotIn('PRIVATE-',out+err)
+        self.assertNotIn(SOL,out+err)
+        self.assertIn('pagination_fields',out)
+        self.assertIn('tokens_count',out)
+        self.assertIn('data_count',out)
+        self.assertFalse(self.output.exists())
+        notifier.assert_not_called()
+        self.assertTrue(all(client.config['max_retries']==0 for client in clients))
+        for request in calls:
+            body=json.loads(request.data) if request.data else parse_qs(urlsplit(request.full_url).query)
+            self.assertIn(body['limit'],(1,['1']))
+        with Store(self.db) as state:
+            self.assertEqual(state.db.execute('SELECT COUNT(*) FROM cache').fetchone()[0],0)
+            self.assertEqual(state.db.execute('SELECT COUNT(*) FROM notifications').fetchone()[0],0)
+
+    def test_contract_probe_continues_after_parameter_failure_without_approving_or_sending(self):
+        requests=[]
+        def transport(request):
+            requests.append(request)
+            path=urlsplit(request.full_url).path
+            if path=='/trader/txs/seek_by_time':
+                raise HTTPError(request.full_url,422,'PRIVATE',{},BytesIO(b'{"detail":[{"loc":["query","limit"],"type":"less_than_equal","ctx":{"le":50},"input":"PRIVATE"}]}'))
+            if path=='/wallet/v2/transfer':return {'success':True,'data':[]}
+            if path=='/wallet/v2/pnl/details':return {'data':{'tokens':[]}}
+            return {'success':True,'data':{'items':[]},'pagination':{'total':0}}
+        def factory(key,store,config):return BirdeyeClient(key,store,config,transport=transport,clock=lambda:NOW,sleep=lambda _:None)
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}), \
+             patch('wallets.cli.BirdeyeClient',side_effect=factory),patch('wallets.cli.Notifier') as notifier:
+            code,out,err=self.call('probe','--contracts','--wallet',SOL)
+        self.assertEqual(code,2)
+        self.assertEqual(len(requests),4)
+        self.assertIn('less_than_equal',err)
+        self.assertNotIn('PRIVATE',out+err)
+        notifier.assert_not_called()
+        with Store(self.db) as state:self.assertEqual(state.latest_evaluations(),[])
+
+    def test_contract_probe_requires_known_shapes_instead_of_empty_success(self):
+        results=[{'success':True,'data':{'PRIVATE-FIELD':'PRIVATE-VALUE'}},
+                 {'success':True,'data':None},
+                 {'data':{'tokens':None}},
+                 {'success':True,'data':{'items':[]}}]
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}), \
+             patch('wallets.cli.BirdeyeClient') as factory:
+            factory.return_value.request.side_effect=results
+            code,out,err=self.call('probe','--contracts','--wallet',SOL)
+        self.assertEqual(code,2)
+        self.assertEqual(factory.return_value.request.call_count,4)
+        self.assertEqual(out.count('Estrutura obrigatória'),4)
+        self.assertNotIn('PRIVATE-',out+err)
+
+    def test_contract_probe_rejects_other_providers_and_missing_key_before_state(self):
+        for provider in ('helius','both'):
+            with self.subTest(provider=provider),patch('wallets.cli.BirdeyeClient') as birdeye,patch('wallets.cli.HeliusClient') as helius:
+                code,out,err=self.call('probe','--contracts','--provider',provider,'--wallet',SOL)
+                self.assertEqual(code,2);birdeye.assert_not_called();helius.assert_not_called()
+                self.assertFalse(self.db.exists())
+        with patch('wallets.cli.BirdeyeClient') as client:
+            code,out,err=self.call('probe','--contracts','--wallet',SOL)
+        self.assertEqual(code,2);client.assert_not_called();self.assertFalse(self.db.exists())
+
+    def test_contract_probe_budget_failure_preserves_quota_and_never_calls_api(self):
+        with Store(self.db) as state:state.reserve_budget('2026-10',27950,28000)
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}), \
+             patch('wallets.cli.BirdeyeClient') as client, \
+             patch('wallets.cli.checkpoint_for',return_value=Mock()) as checkpoint:
+            code,out,err=self.call('probe','--contracts','--wallet',SOL,'--checkpoint-command','mock-save')
+        self.assertEqual(code,2);client.assert_not_called();checkpoint.return_value.assert_not_called()
+        with Store(self.db) as state:
+            self.assertEqual(state.db.execute('SELECT credits FROM budgets').fetchone()[0],27950)
+            self.assertEqual(state.latest_evaluations(),[])
+
+    def test_contract_probe_checkpoint_failure_blocks_network(self):
+        import subprocess
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}), \
+             patch('wallets.cli.BirdeyeClient') as client, \
+             patch('wallets.cli.checkpoint_for',return_value=Mock(side_effect=subprocess.CalledProcessError(1,['mock-save']))):
+            code,out,err=self.call('probe','--contracts','--wallet',SOL,'--checkpoint-command','mock-save')
+        self.assertEqual(code,2);client.assert_not_called()
+        self.assertNotIn('PRIVATE-',out+err)

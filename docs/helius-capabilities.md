@@ -14,7 +14,7 @@ Fontes consultadas:
 - [Contrato getTransactionsForAddress](https://www.helius.dev/docs/rpc/gettransactionsforaddress) e [referência API](https://www.helius.dev/docs/api-reference/rpc/http/gettransactionsforaddress).
 - [Indexação de Solana](https://www.helius.dev/docs/rpc/how-to-index-solana-data): reconstrução, paginação, contas de token e limites das pesquisas por endereço.
 
-O artigo de lançamento de outubro de2025 indicava100 créditos por pedido e acesso pago. Não é usado como contrato atual: as páginas acima documentam faturação variável de10 créditos por cada100 transações completas devolvidas. A documentação não substitui uma confirmação autenticada com uma chave Free. **Não foi feita nenhuma consulta Helius real nesta implementação sem chave configurada.**
+O artigo de lançamento de outubro de2025 indicava100 créditos por pedido e acesso pago. Não é usado como contrato atual: as páginas acima documentam faturação variável de10 créditos por cada100 transações completas devolvidas. A documentação não substitui uma confirmação autenticada com uma chave Free. **Validação autenticada posterior:** a sondagem de 28-10-2026 confirmou acesso ao método (um pedido, máximo10 créditos); em29-10-2026 uma análise real guardou2472 transações de origem e1467 eventos normalizados. Isto confirma recolha parcial, não compradores globais, cobertura integral ou rentabilidade. Consultar o [registo da entrega](delivery.md).
 
 ## Contrato implementado
 
@@ -66,4 +66,4 @@ Para descobrir os primeiros compradores de um token, consultar apenas o mint pod
 - HTTP429 e falhas transitórias têm retentativas limitadas, com espera limitada e nova reserva por tentativa. Ao atingir a quota local, o pedido não é efetuado.
 - Corpos, mensagens remotas e URLs autenticados não são apresentados em exceções, logs ou relatórios. Os únicos dados de autenticação necessários são guardados como GitHub Actions Secrets.
 
-Cada uma das oito verificações obrigatórias mantém o seu papel. Acrescentar Helius melhora a evidência disponível, mas **não transforma cobertura desconhecida em aprovação**. Fixtures/mocks verificam o código e os bloqueios; não demonstram acesso real da chave Free nem validam rentabilidade de carteiras reais.
+Cada uma das oito verificações obrigatórias mantém o seu papel. Acrescentar Helius melhora a evidência disponível, mas **não transforma cobertura desconhecida em aprovação**. Fixtures/mocks verificam o código e os bloqueios; a confirmação de acesso real acima é separada e também não valida rentabilidade de carteiras reais.

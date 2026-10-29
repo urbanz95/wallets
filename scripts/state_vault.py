@@ -54,9 +54,31 @@ class GitHub:
         release = json.loads(content)
         # O endpoint do release não é uma estratégia de paginação de assets.
         # Ler todas as páginas evita restaurar uma geração antiga após meses de execução.
-        pages = self.command(['api', '--paginate', '--slurp',
+        pages = self.command(['api', '--paginate',
                               f'repos/{self.repository}/releases/{int(release["id"])}/assets?per_page=100'])
-        release['assets'] = [asset for page in json.loads(pages) for asset in page]
+        # gh 2.46 já suporta --paginate, mas ainda não --slurp. Cada página
+        # é um documento JSON independente; nunca aceitar apenas a primeira.
+        assets = []
+        decoder = json.JSONDecoder()
+        position = 0
+        page_count = 0
+        try:
+            document = pages.decode('utf-8')
+            while position < len(document):
+                while position < len(document) and document[position] in ' \t\r\n':
+                    position += 1
+                if position == len(document):
+                    break
+                page, position = decoder.raw_decode(document, position)
+                if not isinstance(page, list) or any(not isinstance(asset, dict) for asset in page):
+                    raise VaultError('Lista de snapshots GitHub inválida; recuperação recusada.')
+                assets.extend(page)
+                page_count += 1
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise VaultError('Paginação de snapshots GitHub inválida; recuperação recusada.') from exc
+        if page_count == 0:
+            raise VaultError('Paginação de snapshots GitHub ausente; recuperação recusada.')
+        release['assets'] = assets
         return release
 
     def create(self):
