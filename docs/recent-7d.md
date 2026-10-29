@@ -62,3 +62,24 @@ Depois da correção, as3carteiras continuam bloqueadas:2têm histórico parcial
 O SQLite reprocessado ultrapassou o teto anterior de256MiB. O cofre experimental passou a usar compressão zlib sem perda antes da cifragem e um limite explícito de512MiB para o SQLite descomprimido. Na medição real,283,49MiB comprimiram para158,69MiB, com igualdade integral após descompressão. O hash continua a validar o SQLite original. O formato e o limite de256MiB do cofre principal permanecem iguais e compatíveis com o leitor da `main`; a compressão é ativada exclusivamente no cofre experimental. A recuperação valida tamanho, autenticação, hash, fim da compressão e integridade SQLite.
 
 A suíte local passou441testes, incluindo15novos casos para colisões SOL/wSOL e armazenamento comprimido, além dos49casos acrescentados no perfil inicial de7dias. Testes com fixtures verificam algoritmos; as contagens anteriores vêm da captura real e do reprocessamento explicitamente separado.
+
+## Segundo teste real com a correção — 29-10-2026, 23:12 em Lisboa
+
+A [execução40971282511](https://github.com/urbanz95/wallets/actions/runs/40971282511), no commit `c3144b4`, terminou com sucesso, incluindo todos os checkpoints e a recuperação cifrada. O [CI dessa revisão](https://github.com/urbanz95/wallets/actions/runs/40971105164) passou. O snapshot final comprimido foi descarregado, decifrado, autenticado e validado em SQLite:416,01MiB de estado descomprimido, dentro do limite experimental de512MiB. O cofre principal continua no formato anterior.
+
+A fila tinha25 candidatas qualificadas; foram avaliadas2 pendentes e1 ainda não avaliada, com0 seleções e0 notificações. Consumo:40 pedidos Birdeye/542CU e25 pedidos Helius/2500 créditos reservados por pedido, dentro das reservas centrais800/5000. Não houve novos erros400/422 nem as falhas de colisão SOL/wSOL do primeiro teste.
+
+Na descoberta atual foram selecionados:
+
+| Token | Endereço | Dias de listagem às23:12 |
+|---|---|---:|
+| United Dividend Trust Fund (UDTF) | `9D51oXUyHGrLdabvXiJHRPc5UhW9Py14z3g6TTw7pump` |0,10 |
+| Dessa (DESSA) | `npz2FhoufQ7pKqhGpaipYWacrAkidyW2yDpVWSvpump` |3,42 |
+
+DESSA originou10 observações novas de carteira/token. UDTF não originou carteiras guardadas nesta consulta; isso não prova ausência de traders. As3 carteiras efetivamente avaliadas tinham origem na descoberta anterior deHI, ainda recente. Os tokens selecionados agora e as origens de análises pendentes são conceitos distintos.
+
+Uma carteira passou `observed_data`: histórico Helius completo com3056 transações, mas sem ciclos fechados com custo histórico USD suficiente; reprovou a amostra e o âmbito. As outras2 conservaram cobertura parcial, já com10000 transações cada e continuação guardada. As limitações dos dados continuam a bloquear a seleção, sem se alterar os limiares para produzir aprovações.
+
+A auditoria encontrou ainda uma perda de prioridade: se a quota interrompesse a descoberta depois de gravar novas origens, o retorno parcial não chegava à fila. A correção recupera apenas as observações válidas gravadas exatamente no corte da pesquisa, pela ordem de inserção. Foram acrescentados2 testes; a suíte passou443 testes. Uma reprodução offline, em SQLite só de leitura e usando as fotografias anteriores ao corte, recuperou as10 candidatas deDESSA e passou a escolher2 pendentes mais1 nova deDESSA. Esta última correção não foi apresentada como uma terceira execução real nem consumiu quota adicional.
+
+Os relatórios completos e o Excel de entrega permanecem locais e privados. O resumo público contém apenas contagens e tokens; nenhuma carteira reprovada ou inconclusiva foi enviada ao Telegram. A experiência continua manual nesta branch, e a rotina diária da `main` não foi substituída.

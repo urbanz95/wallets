@@ -155,6 +155,8 @@ def run(args, config, *, store_factory=None, checkpoint_override=None):
                 try:discovered=collector.discover(now)
                 except (BirdeyeError,HeliusError) as exc:notes.append(str(exc))
                 finally:client.config=total_limits
+                if recent_mode:
+                    discovered=list(dict.fromkeys(discovered+recent.newly_observed_candidates(store,start,now)))
                 notes.extend(collector.limitations)
         if not key:notes.append('Sem consultas nesta execução: chave ausente ou orçamento indisponível. Verificações ficam indeterminadas.')
         early=[]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from .models import iso, parse_time
+from .models import dumps, iso, parse_time
 
 PROFILE = 'recent-7d'
 
@@ -75,6 +75,34 @@ def discovery_rows(store, wallet, start, end):
         except (ValueError, TypeError, KeyError, OverflowError):
             # Evidência antiga ou malformada não prova uma origem recente.
             continue
+    return result
+
+
+
+def newly_observed_candidates(store, start, end):
+    """Recuperar descobertas parciais deste corte na ordem de inserção.
+
+    O coletor pode atingir quota depois de gravar observações e antes de
+    devolver a lista. Só a observação exatamente em T prova descoberta nesta
+    execução; origens antigas não são promovidas a novas por este caminho.
+    """
+    end = parse_time(end)
+    result, validated = [], {}
+    rows = store.db.execute(
+        'SELECT wallet,token,payload FROM discovery_observations WHERE at=? ORDER BY rowid',
+        (iso(end),),
+    ).fetchall()
+    for wallet, token, payload in rows:
+        if wallet in result:
+            continue
+        if wallet not in validated:
+            validated[wallet] = {
+                (row['token'], dumps(row['evidence']))
+                for row in discovery_rows(store, wallet, start, end)
+                if parse_time(row['observed_at']) == end
+            }
+        if (token, payload) in validated[wallet]:
+            result.append(wallet)
     return result
 
 

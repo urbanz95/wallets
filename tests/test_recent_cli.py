@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wallets import cli, recent
-from wallets.birdeye import BirdeyeError
+from wallets.birdeye import BirdeyeError, BudgetExceeded
 from wallets.checks import evaluate
 from wallets.models import Coverage, Event, iso
 from wallets.storage import Store
@@ -84,6 +84,17 @@ class RecentQueueTests(unittest.TestCase):
         selected,counts=recent.select_candidates(self.store,{},['unknown-listing'],[],self.start,NOW,3)
         self.assertEqual(selected,['unknown-listing'])
         self.assertEqual(counts['selected_new_distinct_origins'],[0])
+
+    def test_partial_discovery_recovery_uses_only_exact_cutoff_in_insertion_order(self):
+        self.origin('old-five-hours',when=NOW-timedelta(hours=5))
+        self.origin('new-z')
+        self.origin('new-a')
+        self.origin('new-z',token='C'*44)
+        self.origin('future',when=NOW+timedelta(seconds=1))
+        self.origin('wrong-profile',profile='legacy')
+        self.origin('old-token-at-cutoff',listed=NOW-timedelta(days=8))
+        recovered=recent.newly_observed_candidates(self.store,self.start,NOW)
+        self.assertEqual(recovered,['new-z','new-a'])
 
     def test_two_pending_slots_and_one_new_slot_are_reserved(self):
         history={}
@@ -210,6 +221,45 @@ class RecentRunTests(unittest.TestCase):
         with Store(self.db) as store:
             self.assertIsNotNone(store.get_evaluation(old_id))
             self.assertEqual(len(store.latest_evaluations()),2)
+
+    def test_quota_after_recording_new_origins_preserves_fresh_order_and_pending_slots(self):
+        old_token='C'*44
+        pending=['D'*44,'E'*44]
+        old_unassessed='1'*44
+        previous=NOW-timedelta(hours=5)
+        evidence={'profile':'recent-7d','time_frame':'7d',
+                  'recent_listing_time':iso(NOW-timedelta(days=2))}
+        with Store(self.db) as store:
+            for wallet in pending+[old_unassessed]:
+                store.record_discovery(wallet,old_token,previous,evidence)
+            for wallet in pending:
+                old=evaluate(wallet,[],Coverage(NOW-timedelta(days=7),previous,previous),
+                             [],[old_token],self.config,previous)
+                store.save_evaluation(old)
+        fresh=['z'*43+character for character in '123456789A']
+        calls=[]
+        client=SimpleNamespace(config=dict(self.config['api']),requests=0,credits=0)
+        class PartialCollector:
+            def __init__(self,api,store,config):
+                self.client,self.store=api,store;self.limitations=[];self.selected_tokens=[]
+            def discover(self,now):
+                for wallet in fresh:
+                    self.store.record_discovery(wallet,TOKEN,now,evidence)
+                raise BudgetExceeded('Limite de descoberta atingido depois de guardar origens.')
+            def collect(self,wallet,start,end):
+                calls.append(wallet)
+                return [],Coverage(start,end,end),{}
+        with patch('wallets.cli.utcnow',return_value=NOW),patch('wallets.cli.BirdeyeClient',return_value=client),             patch('wallets.cli.Collector',PartialCollector),patch('wallets.cli.Notifier') as notifier,             redirect_stdout(StringIO()):
+            self.assertEqual(cli.run(self.args,self.config,checkpoint_override=Mock()),0)
+        self.assertEqual(calls,pending+[fresh[0]])
+        self.assertNotIn(old_unassessed,calls)
+        self.assertEqual(client.config['max_credits_per_run'],800)
+        notifier.assert_not_called()
+        report=json.loads((self.output/'report.json').read_text())
+        queue_note=next(note for note in report['notes'] if note.startswith('Fila recente (contagens): '))
+        queue=json.loads(queue_note.split(': ',1)[1])
+        self.assertEqual((queue['selected_pending'],queue['selected_new']),(2,1))
+        self.assertEqual(queue['new_candidates'],11)
 
     def test_internal_store_injection_requires_recent_profile_and_no_notify(self):
         for config,notify in ((cli.load_config(ROOT/'config.toml'),False),(self.config,True)):
