@@ -14,7 +14,7 @@ from decimal import Decimal
 from .analysis import SETTLEMENT_TOKENS, metrics
 from .models import (
     Check, EVALUATION_SOURCES, OBSERVED_REQUIRED_CHECKS, OBSERVED_UNVERIFIED_NAMES, Status, UTC,
-    allowed_event_sources, parse_time,
+    allowed_event_sources, iso, parse_time,
 )
 from .observed_accounting import summarize_observed
 
@@ -32,6 +32,68 @@ def _number(config, name):
     if not value.is_finite():
         raise ValueError('Critério numérico não finito')
     return value
+
+
+def _positive_quantity(event):
+    try:
+        quantity = Decimal(str(event.quantity))
+        return not isinstance(event.quantity, bool) and quantity.is_finite() and quantity > ZERO
+    except (ValueError, TypeError, ArithmeticError):
+        return False
+
+
+def _recent_settings(config):
+    settings = config.get('recent', {})
+    if not isinstance(settings, dict) or not isinstance(settings.get('enabled', False), bool):
+        raise ValueError('Perfil recente inválido')
+    if not settings.get('enabled', False):
+        return None
+    values = dict(window_days=settings.get('window_days', 7),
+                  min_activity_days=settings.get('min_activity_days', 4),
+                  min_profitable_days=settings.get('min_profitable_days', 3),
+                  require_activity_hours=settings.get('require_activity_hours', 24))
+    if (any(type(value) is not int for value in values.values())
+            or values['window_days'] != 7
+            or not 1 <= values['min_activity_days'] <= 7
+            or not 1 <= values['min_profitable_days'] <= 7
+            or not 1 <= values['require_activity_hours'] <= 168):
+        raise ValueError('Limites do perfil recente inválidos')
+    return values
+
+
+def _recent_daily(summary, events, start, end):
+    """Sete blocos de 24h ancorados no corte; realizado atribuído à venda.
+
+    Não dividir resultados semanais por dias nem selecionar só dias ativos.
+    A contabilidade devolve cada venda FIFO para preservar a sua data real.
+    """
+    periods = [{'start': start + timedelta(days=index),
+                'end': start + timedelta(days=index+1),
+                'gross_result_before_fees': ZERO, 'active': False}
+               for index in range(7)]
+    closed = {row['token'] for row in summary['per_token'] if row['state'] == 'CLOSED'}
+    for row in summary['per_token']:
+        if row['state'] != 'CLOSED':
+            continue
+        for realized in row['realized_events']:
+            timestamp = parse_time(realized['timestamp'])
+            if not start <= timestamp < end:
+                raise ValueError('Venda fora da janela recente')
+            index = (timestamp - start) // timedelta(days=1)
+            periods[index]['gross_result_before_fees'] += realized['gross_result_before_fees']
+    for event in events:
+        if event.token in closed and event.kind in ('buy', 'sell'):
+            timestamp = parse_time(event.timestamp)
+            if start <= timestamp < end:
+                periods[(timestamp-start) // timedelta(days=1)]['active'] = True
+    return {
+        'daily': {iso(row['start']): row['gross_result_before_fees'] for row in periods},
+        'daily_periods': periods,
+        'activity_days': sum(row['active'] for row in periods),
+        'profitable_days_count': sum(row['gross_result_before_fees'] > ZERO for row in periods),
+        'days_count': 7,
+        'daily_definition': 'Resultado bruto FIFO de tokens fechados em sete blocos consecutivos de 24 horas, ancorados no corte; inclui blocos inativos com zero. Não demonstra consistência mensal.',
+    }
 
 
 def _window_covers(scope, start, end):
@@ -105,6 +167,8 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
     events = list(events)
     provider = provider if isinstance(provider, dict) else {}
     now = parse_time(now)
+    recent = _recent_settings(config)
+    scope = ('Consistência recente em 7 dias. ' + SCOPE) if recent else SCOPE
     coverage_info = asdict(coverage)
     checks = []
 
@@ -116,11 +180,16 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
 
     time_valid = True
     bad_event = False
+    recent_window_valid = True
+    recent_activity = True
+    latest_activity = None
     try:
         start, end, fetched = (parse_time(coverage.start), parse_time(coverage.end),
                                parse_time(coverage.fetched_at))
         hours = (now - fetched).total_seconds() / 3600
         end_hours = (now - end).total_seconds() / 3600
+        if recent:
+            recent_window_valid = end - start == timedelta(days=recent['window_days'])
         time_valid = (start < end <= fetched <= now
                       and 0 <= hours <= config['max_data_age_hours']
                       and 0 <= end_hours <= config['max_data_age_hours'])
@@ -135,10 +204,19 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
                      or any(event.wallet != wallet or event.source not in allowed_sources
                             or not isinstance(event.id, str) or not event.id
                             or not isinstance(event.token, str) or not event.token
-                            or not start <= parse_time(event.timestamp) <= end
+                            or not (start <= parse_time(event.timestamp) < end if recent
+                                    else start <= parse_time(event.timestamp) <= end)
                             or parse_time(event.timestamp) > now for event in events))
     except (TypeError, ValueError, OverflowError, AttributeError):
         bad_event = True
+
+    if recent:
+        activity_times = [] if bad_event else [parse_time(event.timestamp) for event in events
+            if event.kind in ('buy', 'sell') and event.token not in SETTLEMENT_TOKENS
+            and _positive_quantity(event)]
+        latest_activity = max(activity_times) if activity_times else None
+        recent_activity = (latest_activity is not None
+                           and end-timedelta(hours=recent['require_activity_hours']) <= latest_activity < end)
 
     try:
         birdeye_complete, helius_complete, conflicts = _sources_complete(provider, start, end)
@@ -147,14 +225,19 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
         conflicts = True
     accounting_error = False
     try:
-        summary = summarize_observed(events, start, end)
+        if recent and not recent_window_valid:
+            raise ValueError('O perfil recente exige uma janela exata de 7 dias')
+        summary = summarize_observed(events, start, end, end_exclusive=bool(recent))
     except (ValueError, TypeError, ArithmeticError, AttributeError):
         summary = _empty_summary()
         accounting_error = True
     live = coverage.source in EVALUATION_SOURCES
-    data_ok = (live and time_valid and not bad_event and not conflicts
+    data_ok = (live and time_valid and recent_window_valid and recent_activity
+               and not bad_event and not conflicts
                and not accounting_error and (birdeye_complete or helius_complete))
-    integrity_error = bad_event or conflicts or accounting_error
+    integrity_error = (bad_event or conflicts or accounting_error or not recent_window_valid
+                       or (bool(recent) and live and time_valid
+                           and (birdeye_complete or helius_complete) and not recent_activity))
     data_status = Status.PASS if data_ok else (Status.FAIL if integrity_error else Status.UNKNOWN)
     add('observed_data', data_status,
         ('Histórico observado paginado e atual, sem conflitos de integridade.' if data_ok else
@@ -164,16 +247,20 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
          'fetched_age_hours': hours, 'period_end_age_hours': end_hours,
          'invalid_or_duplicate_or_future_event': bad_event,
          'conflicting_transactions': conflicts, 'accounting_input_error': accounting_error,
-         'live_source': live, 'global_coverage_proven': False})
+         'live_source': live, 'global_coverage_proven': False,
+         **({'profile': 'recent-7d', 'window_days': recent['window_days'],
+             'exact_window_valid': recent_window_valid, 'last_activity_at': latest_activity,
+             'activity_within_required_hours': recent_activity,
+             'required_activity_hours': recent['require_activity_hours']} if recent else {})})
 
     token_results = summary['token_results']
     measured = metrics(token_results, discovery_tokens)
     measured.update({key: value for key, value in summary.items()
                      if key not in ('token_results', 'per_token')})
     measured['observed_per_token'] = summary['per_token']
-    measured['scope'] = SCOPE
+    measured['scope'] = scope
     measured['gross_result_before_fees'] = summary['gross_result_before_fees']
-    measured['result_definition'] = SCOPE
+    measured['result_definition'] = scope
     measured['cost_treatment'] = 'FIFO de ciclos observados fechados, BRUTO antes de taxas; custos de aquisição desconhecidos excluem o token.'
     measured['open_positions_count'] = summary['open_tokens_count']
     measured['open_losses'] = None
@@ -199,14 +286,29 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
         measured['profitable_week_fraction'] = None
     measured['weekly_definition'] = 'Resultado bruto de ciclos fechados em semanas ISO UTC não sobrepostas, incluindo semanas inativas da janela.'
     measured['win_rate_definition'] = 'Tokens fechados observados com resultado bruto positivo / todos os tokens fechados incluídos, incluindo resultados zero.'
-    sample_ok = (measured['tokens_count'] >= config['min_tokens']
-                 and measured['activity_days'] >= config['min_activity_days']
-                 and measured['observed_outcome_weeks_count'] >= config['min_weeks'])
+    if recent:
+        daily = _recent_daily(summary, [] if bad_event or accounting_error else events, start, end)
+        measured.update(daily)
+        measured['profile'] = 'recent-7d'
+        measured['last_activity_at'] = latest_activity
+        measured['window_start_inclusive'] = start
+        measured['window_end_exclusive'] = end
+        sample_ok = (measured['tokens_count'] >= config['min_tokens']
+                     and measured['activity_days'] >= recent['min_activity_days'])
+        sample_reason = ('Amostra recente mínima de tokens fechados e blocos ativos de 24 horas cumprida.'
+                         if sample_ok else 'Amostra recente insuficiente de tokens fechados ou blocos ativos de 24 horas.')
+        sample_evidence = {key: measured[key] for key in ('tokens_count', 'activity_days', 'days_count')}
+        sample_evidence.update(profile='recent-7d', minimum_activity_days=recent['min_activity_days'],
+                               monthly_consistency_verified=False)
+    else:
+        sample_ok = (measured['tokens_count'] >= config['min_tokens']
+                     and measured['activity_days'] >= config['min_activity_days']
+                     and measured['observed_outcome_weeks_count'] >= config['min_weeks'])
+        sample_reason = ('Amostra mínima de tokens fechados, dias e semanas cumprida.' if sample_ok else
+                         'Amostra insuficiente de tokens fechados, dias ou semanas independentes.')
+        sample_evidence = {key: measured[key] for key in ('tokens_count', 'activity_days', 'observed_outcome_weeks_count', 'weeks_count')}
     add('observed_sample', Status.PASS if data_ok and sample_ok else
-        (Status.FAIL if data_ok else Status.UNKNOWN),
-        'Amostra mínima de tokens fechados, dias e semanas cumprida.' if sample_ok else
-        'Amostra insuficiente de tokens fechados, dias ou semanas independentes.',
-        {key: measured[key] for key in ('tokens_count', 'activity_days', 'observed_outcome_weeks_count', 'weeks_count')})
+        (Status.FAIL if data_ok else Status.UNKNOWN), sample_reason, sample_evidence)
     accounting_ok = bool(token_results) and all(result.reliable and result.realized is not None
                                                 for result in token_results)
     add('observed_accounting', Status.PASS if data_ok and accounting_ok else Status.UNKNOWN,
@@ -220,16 +322,25 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
     pf = measured['profit_factor']
     pf_ok = ((pf is not None and pf >= _number(config, 'min_profit_factor'))
              or measured['no_realized_losses'])
+    periods_ok = (measured['profitable_days_count'] >= recent['min_profitable_days'] if recent else
+                  measured['profitable_week_fraction'] is not None
+                  and measured['profitable_week_fraction'] >= _number(config, 'min_profitable_week_fraction'))
     consistent = (sample_ok and known and measured['total_result'] > ZERO
                   and measured['win_rate'] is not None and measured['win_rate'] >= _number(config, 'min_win_rate')
                   and pf_ok and measured['median_return'] is not None
-                  and measured['median_return'] >= _number(config, 'min_median_return')
-                  and measured['profitable_week_fraction'] is not None
-                  and measured['profitable_week_fraction'] >= _number(config, 'min_profitable_week_fraction'))
+                  and measured['median_return'] >= _number(config, 'min_median_return') and periods_ok)
+    consistency_evidence = {key: measured[key] for key in
+                            ('win_rate', 'profit_factor', 'no_realized_losses', 'median_return')}
+    consistency_evidence.update({key: measured[key] for key in
+                                (('daily', 'profitable_days_count', 'days_count') if recent else
+                                 ('weekly', 'profitable_week_fraction'))})
+    if recent:
+        consistency_evidence.update(profile='recent-7d', minimum_profitable_days=recent['min_profitable_days'],
+                                    monthly_consistency_verified=False)
     add('observed_consistency', Status.PASS if consistent else (Status.FAIL if known else Status.UNKNOWN),
-        'Consistência bruta mínima entre tokens fechados e semanas cumprida.' if consistent else
-        'Consistência bruta ou amostra abaixo dos limites, ou métricas indisponíveis.',
-        {key: measured[key] for key in ('win_rate', 'profit_factor', 'no_realized_losses', 'median_return', 'weekly', 'profitable_week_fraction')})
+        ('Consistência bruta recente entre tokens fechados e blocos de 24 horas cumprida.' if recent else
+         'Consistência bruta mínima entre tokens fechados e semanas cumprida.') if consistent else
+        'Consistência bruta ou amostra abaixo dos limites, ou métricas indisponíveis.', consistency_evidence)
     concentration_known = known and all(measured[key] is not None for key in
         ('without_discovery', 'without_best', 'without_top3', 'top1_share', 'top3_share'))
     concentrated_ok = (concentration_known and sample_ok and measured['without_discovery'] > ZERO
@@ -283,4 +394,4 @@ def evaluate_observed(wallet, events, coverage, provider, discovery_tokens, conf
          'liquidity_verified': False, 'execution_price_verified': False, 'simulation': False})
     assert tuple(check['name'] for check in checks) == OBSERVED_REQUIRED_CHECKS
     return {'policy': 'observed-v1', 'checks': checks, 'metrics': measured,
-            'unverified': _unverified(summary), 'scope': SCOPE}
+            'unverified': _unverified(summary), 'scope': scope}

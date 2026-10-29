@@ -21,6 +21,7 @@ from .models import Coverage, Event, TokenResult, dumps, parse_time, utcnow
 from .reporting import write_reports
 from .storage import Store, process_lock
 from .telegram import Notifier, eligible_for_delivery
+from . import recent
 
 
 def load_config(path):
@@ -56,6 +57,7 @@ def load_config(path):
         if not isinstance(launch,dict):raise ValueError('Lista de endereços Helius inválida')
         for token,addresses in launch.items():
             if not valid_address(token) or not isinstance(addresses,list) or any(not valid_address(address) for address in addresses):raise ValueError('Endereço público de lançamento inválido')
+    recent.validate_recent(config)
     return config
 
 
@@ -113,13 +115,21 @@ def notify_from_store(store,config,checkpoint):
     return sent
 
 
-def run(args, config):
-    checkpoint=checkpoint_for(args)
-    with process_lock(args.db), Store(args.db) as store:
-        now=utcnow();start=now-timedelta(days=config['lookback_days'])
+def run(args, config, *, store_factory=None, checkpoint_override=None):
+    recent_mode=recent.enabled(config)
+    if store_factory is not None or checkpoint_override is not None:
+        if (not recent_mode or getattr(args,'notify',False)
+                or (checkpoint_override is not None and not callable(checkpoint_override))):
+            raise ValueError('Injeção de estado apenas disponível na experiência recente')
+    checkpoint=checkpoint_for(args) if checkpoint_override is None else checkpoint_override
+    factory=store_factory or Store
+    with process_lock(args.db), factory(args.db) as store:
+        now=utcnow();start=now-timedelta(days=7 if recent_mode else config['lookback_days'])
         store.prune_cache(now)
         key=os.environ.get('BIRDEYE_API_KEY')
         notes=[];discovered=[];collector=None;helius_history=None;helius_client=None
+        evaluated=[]
+        if recent_mode:notes.append('Perfil recent-7d: descoberta e avaliação apenas nos 7 dias anteriores ao corte; Telegram mantém a política estrita.')
         settings=config.get('helius',{})
         helius_key=os.environ.get('HELIUS_API_KEY') if settings.get('enabled',False) else None
         if helius_key:
@@ -129,15 +139,22 @@ def run(args, config):
             if helius_key:helius_history=HeliusHistory(helius_client,store,config)
         elif settings.get('enabled',False):notes.append('HELIUS_API_KEY não configurada: histórico adicional e compras iniciais observadas indisponíveis.')
         if key:
-            client=BirdeyeClient(key,store,config['api']);collector=Collector(client,store,config)
+            client=BirdeyeClient(key,store,dict(config['api']));collector=Collector(client,store,config)
             if args.checkpoint_command:
                 if not store.prepay_run(now.strftime('%Y-%m'),config['api']['max_credits_per_run'],
                                         config['api']['monthly_credit_ceiling'],checkpoint):
                     notes.append('Limite mensal local atingido: consultas adiadas, sem novas aprovações.')
                     key=None
             if key:
+                total_limits=client.config
+                if recent_mode:
+                    profile=config['recent']
+                    client.config=dict(total_limits,
+                        max_credits_per_run=min(total_limits['max_credits_per_run'],profile.get('discovery_credit_budget',160)),
+                        max_requests_per_run=min(total_limits['max_requests_per_run'],profile.get('discovery_request_budget',5)))
                 try:discovered=collector.discover(now)
                 except (BirdeyeError,HeliusError) as exc:notes.append(str(exc))
+                finally:client.config=total_limits
                 notes.extend(collector.limitations)
         if not key:notes.append('Sem consultas nesta execução: chave ausente ou orçamento indisponível. Verificações ficam indeterminadas.')
         early=[]
@@ -147,7 +164,7 @@ def run(args, config):
             for token in tokens:
                 addresses=settings.get('launch_addresses',{}).get(token,[])
                 try:
-                    found=helius_history.discover_first_observed(token,now,addresses=addresses)
+                    found=helius_history.discover_first_observed(token,now,addresses=addresses,**({'start':start} if recent_mode else {}))
                     early.extend(found.get('wallets',[]))
                     notes.append(f'Helius: {len(found.get("wallets",[]))} carteiras com compras iniciais observadas para {token}; cobertura global não demonstrada.')
                     if found.get('failures'):notes.append('Descoberta Helius parcial: consultar evidências guardadas.')
@@ -155,9 +172,14 @@ def run(args, config):
         # Primeiro pedidos manuais; restantes candidatos rodam por avaliação mais antiga.
 
         history={e.wallet:e for e in store.latest_evaluations()}
-        automatic=list(dict.fromkeys(early+discovered+store.wallets()))
-        automatic.sort(key=lambda address:history[address].evaluated_at.isoformat() if address in history else '')
-        candidates=list(dict.fromkeys(args.wallet+automatic))[:config['discovery']['max_wallets']]
+        if recent_mode:
+            candidates,queue=recent.select_candidates(store,history,early+discovered,args.wallet,start,now,
+                                                       config['discovery']['max_wallets'])
+            notes.append('Fila recente (contagens): '+dumps(queue))
+        else:
+            automatic=list(dict.fromkeys(early+discovered+store.wallets()))
+            automatic.sort(key=lambda address:history[address].evaluated_at.isoformat() if address in history else '')
+            candidates=list(dict.fromkeys(args.wallet+automatic))[:config['discovery']['max_wallets']]
         for wallet in candidates:
             provider={};coverage=Coverage(start,now,utcnow(),source='birdeye')
             events=store.get_events(wallet,start,now)
@@ -171,16 +193,30 @@ def run(args, config):
                 events,coverage,provider=augment_with_helius(wallet,start,now,events,coverage,provider,helius_history,store)
             elif settings.get('enabled',False):
                 coverage.failures.append('Histórico Helius não atualizado; não assumir ausência de atividade adicional.')
+            if recent_mode:
+                provider['recent_profile']={'name':'recent-7d','window_start':start,'window_end':now,
+                    'activity_confirmation':'verificação obrigatória nos eventos recolhidos'}
+                # O mesmo conjunto half-open alimenta contabilidade e evidência.
+                events=[event for event in events if start<=event.timestamp<now]
             try:results=account(events,coverage,current_marks(provider,now))
             except (ValueError,ArithmeticError):
                 coverage.complete=False;coverage.failures.append('Contabilidade incoerente; requer dados verificáveis.')
                 results=[]
-            evaluation=evaluate(wallet,events,coverage,results,store.discovery_tokens(wallet),config,utcnow(),provider)
+            origins=([row['token'] for row in recent.discovery_rows(store,wallet,start,now)]
+                     if recent_mode else store.discovery_tokens(wallet))
+            evaluation=evaluate(wallet,events,coverage,results,origins,config,utcnow(),provider)
             store.save_evaluation(evaluation)
+            evaluated.append(evaluation)
+            if recent_mode:checkpoint()
         notes.append('Limites gratuitos ou falta de cobertura nunca autorizam aprovação por omissão.')
         if collector:notes.append(f'Pedidos Birdeye nesta execução: {collector.client.requests}; CU reservados por pedido: {collector.client.credits}.')
         if helius_client:notes.append(f'Pedidos Helius nesta execução: {helius_client.requests}; créditos máximos reservados: {helius_client.credits}.')
-        path=write_reports(store.latest_evaluations(),args.output,notes=notes,discoveries=store.discoveries())
+        report_discoveries=store.discoveries()
+        if recent_mode:
+            report_discoveries=[dict(wallet=e.wallet,token=row['token'],discovered_at=row['observed_at'])
+                for e in evaluated for row in recent.discovery_rows(store,e.wallet,start,now)]
+        path=write_reports(evaluated if recent_mode else store.latest_evaluations(),args.output,
+                           notes=notes,discoveries=report_discoveries)
         print(f'Relatório local: {path}. Carteiras avaliadas nesta execução: {len(candidates)}.',flush=True)
         for note in notes:print(note,flush=True)
         checkpoint()

@@ -118,6 +118,8 @@ class HeliusHistory:
         if start >= end or end > self.clock():
             raise ValueError('Intervalo Helius inválido ou posterior ao instante atual.')
         key = self.cursor_key(address, ascending, token_accounts)
+        if self.config.get('recent', {}).get('enabled', False):
+            key += ':recent-7d'  # não retomar cursores legados ancorados em EPOCH
         failures, queried_windows, pages = [], [], 0
         try:
             state = self._state(key)
@@ -217,8 +219,12 @@ class HeliusHistory:
             'covered_end': parse_time(state['covered_end']) if state and state.get('covered_end') else None,
         }
 
-    def discover_first_observed(self, token, now, *, addresses=()):
+    def discover_first_observed(self, token, now, *, addresses=(), start=None):
         now = parse_time(now)
+        recent = self.config.get('recent', {}).get('enabled', False)
+        start = parse_time(start) if start is not None else (now-timedelta(days=7) if recent else EPOCH)
+        if start >= now or (recent and start < now-timedelta(days=7)):
+            raise ValueError('Janela de descoberta recente inválida.')
         if not valid_address(token) or now > self.clock():
             raise ValueError('Token ou data de descoberta inválidos.')
         if isinstance(addresses, str):
@@ -232,7 +238,7 @@ class HeliusHistory:
         scope_complete, ordering_complete, failures, rows_by_signature = True, True, [], {}
         conflicted_signatures=set()
         for address in scoped_addresses:
-            history = self.history(address, EPOCH, now, ascending=True, token_accounts=False)
+            history = self.history(address, start, now, ascending=True, token_accounts=False)
             scope_complete = scope_complete and history['pages_complete']
             ordering_complete = ordering_complete and history['ordering_complete']
             failures.extend(history['failures'])
@@ -276,22 +282,39 @@ class HeliusHistory:
                 for event in events:
                     if (isinstance(event,Event) and event.wallet == owner and event.token == token and event.kind == 'buy'
                             and event.source == 'helius' and not event.multi_step
-                            and event.quantity > 0 and event.timestamp <= now):
+                            and event.quantity > 0 and start <= event.timestamp <= now
+                            and (not recent or event.timestamp < now)):
                         buyers.setdefault(owner, {
                             'wallet': owner, 'tx_hash': event.tx_hash, 'traded_at': event.timestamp,
                             'slot': row['slot'], 'transaction_index': row.get('transactionIndex'),
                         })
         selected = list(buyers.values())[:limit]
+        listing_evidence = {}
+        if recent:
+            selected_row = self.store.db.execute(
+                'SELECT payload FROM token_selections WHERE token=? AND at<=? ORDER BY at DESC LIMIT 1',
+                (token, iso(now)),
+            ).fetchone()
+            if selected_row:
+                try:
+                    listed = parse_time(json.loads(selected_row[0])['recent_listing_time'])
+                    if start <= listed <= now:
+                        listing_evidence = {'recent_listing_time': iso(listed)}
+                except (ValueError, TypeError, KeyError, OverflowError):
+                    pass  # Sem prova, a origem não sustenta reentrada automática.
         for buyer in selected:
             self.store.record_discovery(buyer['wallet'], token, now, evidence={
                 'origin': 'helius_first_observed', 'source': 'helius',
+                **({'profile': 'recent-7d', 'time_frame': '7d',
+                    'window_start': iso(start), 'window_end': iso(now),
+                    **listing_evidence} if recent else {}),
                 'scope_addresses': scoped_addresses, 'tx_hash': buyer['tx_hash'],
                 'traded_at': iso(buyer['traded_at']), 'slot': buyer['slot'],
                 'transaction_index': buyer['transaction_index'], 'scope_pages_complete': scope_complete,
                 'global_first_buyers_verified': False, 'ordering_complete': ordering_complete,
             })
         return {
-            'source': 'helius', 'token': token, 'observed_at': now,
+            'source': 'helius', 'token': token, 'observed_at': now, 'window_start': start,
             'wallets': [buyer['wallet'] for buyer in selected], 'buyers': selected,
             'scope_addresses': scoped_addresses, 'scope_pages_complete': scope_complete,
             'ordering_complete': ordering_complete,

@@ -62,7 +62,7 @@ def _consume(lots, quantity):
     return consumed, remaining
 
 
-def summarize_observed(events, start, end):
+def summarize_observed(events, start, end, *, end_exclusive=False):
     """Resumir fluxos observados sem usar custos desconhecidos como zero.
 
     ``token_results`` contém apenas tokens CLOSED. OPEN e UNKNOWN ficam no
@@ -82,7 +82,7 @@ def summarize_observed(events, start, end):
         if any(not isinstance(value, str) or not value for value in (event.wallet, event.token, event.id)):
             raise ValueError('Evento sem identidade, carteira ou token')
         timestamp = parse_time(event.timestamp)
-        if not start <= timestamp <= end:
+        if not (start <= timestamp < end if end_exclusive else start <= timestamp <= end):
             raise ValueError('Evento fora da janela ou com informação futura')
         _decimal(event.quantity, 'Quantidade')
         if event.usd_value is not None:
@@ -120,6 +120,7 @@ def summarize_observed(events, start, end):
         entries = []
         holdings = []
         weekly = defaultdict(lambda: ZERO)
+        realized_events = []
         buys = sells = 0
         timestamps = Counter(parse_time(event.timestamp) for event in token_events
                              if event.kind in ('buy', 'sell'))
@@ -170,6 +171,7 @@ def summarize_observed(events, start, end):
                 outcome = value - basis
                 gross += outcome
                 weekly[_week(timestamp)] += outcome
+                realized_events.append({'timestamp': timestamp, 'gross_result_before_fees': outcome})
                 holdings.extend((timestamp - acquired_at).total_seconds() for _, _, acquired_at in parts)
             else:
                 reasons.append('Tipo de operação não suportado na contabilidade observada.')
@@ -203,6 +205,7 @@ def summarize_observed(events, start, end):
             'open_quantity': None if state == 'UNKNOWN' else open_quantity,
             'open_cost_usd': None if state == 'UNKNOWN' else open_cost,
             'weekly': {} if state == 'UNKNOWN' else dict(weekly),
+            'realized_events': [] if state == 'UNKNOWN' else realized_events,
             'holding_seconds': [] if state == 'UNKNOWN' else holdings,
             'entries': entries,
         })

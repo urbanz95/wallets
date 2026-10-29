@@ -1,0 +1,61 @@
+name: Experiência isolada — últimos sete dias
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      STATE_ENCRYPTION_KEY:
+        required: true
+      BIRDEYE_API_KEY:
+        required: true
+      HELIUS_API_KEY:
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: wallets-durable-state
+  cancel-in-progress: false
+jobs:
+  recent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: urbanz95/wallets
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar
+        run: python -m pip install -e .
+      - name: Restaurar estado principal para reservar quota partilhada
+        id: restore
+        run: python scripts/state_vault.py restore --db state/production.sqlite
+      - name: Executar experiência isolada; nunca enviar Telegram
+        env:
+          BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: >-
+          python scripts/recent_experiment.py --production-db state/production.sqlite
+          --db state/recent-7d.sqlite --output reports/recent-7d --config config.recent-7d.toml
+      - name: Cópia de recuperação cifrada
+        if: always() && steps.restore.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-recent-7d-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            state/recent-7d.sqlite.enc
+            state/recent-7d.sqlite.pending.enc
+            state/production.sqlite.enc
+            state/production.sqlite.pending.enc
+          if-no-files-found: error
+          retention-days: 90
+      - name: Resumo público — só contagens e tokens, sem carteiras
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-7d-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/recent-7d/experiment-summary.json
+          if-no-files-found: ignore
+          retention-days: 90

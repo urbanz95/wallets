@@ -1,5 +1,8 @@
 # Carteiras Solana — Birdeye Standard e Helius Free
 
+> **Branch experimental `feat/recent-7d`:** usa [config.recent-7d.toml](config.recent-7d.toml) para descobrir tokens com até7 dias de listagem e avaliar operações dos últimos7 dias. O [guia da experiência](docs/recent-7d.md) explica o teste real, o estado isolado e os limites. Esta branch não envia Telegram; a rotina da `main` conserva o seu comportamento.
+
+
 A ferramenta descobre carteiras em tokens Solana e avalia a consistência das operações disponíveis. O modo predefinido **observed** acrescenta uma seleção para consulta nos relatórios, com oito verificações dos dados observados. Mostra resultados brutos antes de taxas e enumera os aspetos **NÃO VERIFICADOS**. Esta seleção não representa aprovação integral da carteira nem autoriza o seu envio para Telegram.
 
 A avaliação observada separa o que os dados permitem medir das provas globais em falta. As oito verificações **estritas** originais continuam guardadas e são sempre obrigatórias para Telegram: `selection.notifications = "strict"` é a única configuração de envio aceite. Uma reprovação estrita também impede a seleção observada; uma indeterminação estrita fica explícita no relatório. Ativar notificações de seleções observadas depende de autorização expressa para alterar a política de envio e ainda não está implementado. Zero seleções continua a ser um resultado válido.

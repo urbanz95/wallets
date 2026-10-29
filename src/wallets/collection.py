@@ -117,6 +117,10 @@ class Collector:
     def max_pages(self):
         return max(1, min(100, self.config.get('api', {}).get('max_pages', 5)))
 
+    @property
+    def recent(self):
+        return self.config.get('recent', {}).get('enabled', False) is True
+
     @staticmethod
     def _items(result, key='items'):
         data = result.get('data')
@@ -129,9 +133,11 @@ class Collector:
     def discover(self, now):
         settings = self.config.get('discovery', {})
         wallets = []
+        recent_ranks = {}
         seen_tokens = set()
         max_tokens = settings.get('max_tokens', 5)
         max_wallets = settings.get('max_wallets', 10)
+        time_frame = settings.get('time_frame', '30d')
         for page in range(self.max_pages):
             params = {
                 'sort_by': 'volume_24h_usd', 'sort_type': 'desc', 'offset': page * 100,
@@ -158,6 +164,16 @@ class Collector:
                              and decimal(token['price_change_24h_percent']) >= Decimal(str(params['min_price_change_24h_percent'])))
                 except (ValueError, TypeError, KeyError):
                     meets = False
+                # A listagem não demonstra criação do mint. Quando o feed
+                # publica o último trade, um token já inativo não origina
+                # candidatas; a atividade da carteira é confirmada separadamente.
+                if meets and self.recent and token.get('last_trade_unix_time') is not None:
+                    try:
+                        last_trade = parse_time(token['last_trade_unix_time'])
+                        hours = self.config.get('recent', {}).get('require_activity_hours', 24)
+                        meets = now - timedelta(hours=hours) <= last_trade < now
+                    except (ValueError, TypeError, OverflowError):
+                        meets = False
                 if not meets:
                     continue
                 seen_tokens.add(address)
@@ -166,25 +182,40 @@ class Collector:
                 for trader_page in range(self.max_pages):
                     rows, trader_meta = self._items(self.client.request(
                         'GET', '/defi/v2/tokens/top_traders', {
-                            'address': address, 'time_frame': '30d', 'sort_by': 'volume',
+                            'address': address, 'time_frame': time_frame, 'sort_by': 'volume',
                             'sort_type': 'desc', 'offset': trader_page * 10, 'limit': 10}))
-                    for row in rows:
+                    for trader_rank, row in enumerate(rows):
                         wallet = row.get('owner')
                         if valid_address(wallet):
-                            self.store.record_discovery(wallet, address, now,{'tags':row.get('tags'), 'endpoint':'/defi/v2/tokens/top_traders'})
-                            if wallet not in wallets and len(wallets) < max_wallets:
+                            self.store.record_discovery(wallet, address, now,{
+                                'tags': row.get('tags'), 'endpoint': '/defi/v2/tokens/top_traders',
+                                'time_frame': time_frame, 'token_listed_at': token['recent_listing_time'],
+                                'recent_listing_time': token['recent_listing_time'],
+                                'profile': 'recent-7d' if self.recent else 'legacy',
+                                'window_start': iso(now - timedelta(days=7)) if self.recent else None,
+                                'activity_confirmation': 'pending_wallet_history' if self.recent else 'not_required',
+                                'window_end': iso(now),
+                            })
+                            if wallet not in wallets and (self.recent or len(wallets) < max_wallets):
                                 wallets.append(wallet)
-                    if len(rows) < 10 or len(wallets) >= max_wallets:
+                                if self.recent:
+                                    # Intercalar origens: a fila limitada da CLI
+                                    # recebe candidatas dos vários tokens, em vez
+                                    # de consumir todas as vagas no primeiro.
+                                    recent_ranks[wallet] = (trader_rank, len(seen_tokens))
+                    # A experiência reserva uma página de traders por token;
+                    # max_wallets limita avaliações na CLI, não a descoberta.
+                    if self.recent or len(rows) < 10 or len(wallets) >= max_wallets:
                         break
                 if len(seen_tokens) >= max_tokens:
-                    return wallets
+                    return sorted(wallets, key=recent_ranks.get) if self.recent else wallets
             if not meta.get('hasNext', meta.get('has_next', False)):
-                return wallets
+                return sorted(wallets, key=recent_ranks.get) if self.recent else wallets
             if not items:
                 self.limitations.append('Descoberta: página vazia com continuação; universo incompleto.')
-                return wallets
+                return sorted(wallets, key=recent_ranks.get) if self.recent else wallets
         self.limitations.append('Descoberta limitada pelo máximo configurado de páginas.')
-        return wallets
+        return sorted(wallets, key=recent_ranks.get) if self.recent else wallets
 
     def _paged(self, path, method, params, field, page_size=100):
         rows = []
@@ -194,6 +225,7 @@ class Collector:
             result = self.client.request(method, path, query if method == 'GET' else None,
                                          query if method == 'POST' else None)
             items, meta = self._items(result, field)
+            meta = dict(meta, _pages_observed=page + 1)
             rows.extend(items)
             if path == '/wallet/v2/current-net-worth':
                 pagination = result.get('pagination')
@@ -249,7 +281,7 @@ class Collector:
         if start >= end or end > self.clock():
             raise ValueError('Período inválido ou com informação futura.')
         coverage = Coverage(start, end, self.clock(), source='birdeye')
-        provider = {'source': 'birdeye', 'pnl_method': 'wac', 'pnl_position_scope': 'duration_only', 'pnl_duration': 'all', 'pnl': [], 'holdings': [],
+        provider = {'source': 'birdeye', 'pnl_method': 'wac', 'pnl_position_scope': 'duration_only', 'pnl_duration': '7d' if self.recent else 'all', 'pnl': [], 'holdings': [],
                     'limitations': ['Idade do token na descoberta refere listagem Birdeye, não criação do mint.',
                                      'Plataforma pump.fun é uma aproximação de launchpad; não confirma categoria memecoin.']}
         events = []
@@ -264,9 +296,26 @@ class Collector:
                 update_covered_start = start < parse_time(covered_start)
             except (ValueError, TypeError):
                 coverage.failures.append('Cursor histórico inválido; recolha integral repetida.')
+        query = {'address': wallet, 'tx_type': 'all', 'ui_amount_mode': 'raw'}
+        if self.recent:
+            # A API real aceita só um limite. Uma sobreposição de um segundo
+            # conserva operações na fronteira inferior; o corte superior é local.
+            query['after_time'] = int(start.timestamp()) - 1
+        else:
+            query['before_time'] = int(end.timestamp())
+        provider['history_query'] = {
+            'bound': 'after_time' if self.recent else 'before_time',
+            'start': iso(start), 'end': iso(end),
+            'end_exclusive': self.recent, 'excluded_at_or_after_cutoff': 0,
+        }
         try:
-            rows, done, _ = self._paged('/trader/txs/seek_by_time', 'GET', {
-                'address': wallet, 'before_time': int(end.timestamp()), 'tx_type': 'all', 'ui_amount_mode': 'raw'}, 'items')
+            rows, done, trade_meta = self._paged('/trader/txs/seek_by_time', 'GET', query, 'items')
+            # Offset num feed móvel não é um cursor nem um snapshot estável.
+            # Uma resposta terminal única pode concluir o âmbito observado;
+            # múltiplas páginas exigem a prova temporal/cursor da fonte Helius.
+            if self.recent and trade_meta['_pages_observed'] > 1:
+                done = False
+                provider['limitations'].append('Histórico Birdeye recente com paginação offset sem ordem estável documentada; não certifica cobertura completa.')
             complete['trades'] = done
             tx_instructions = {}
             trader_errors = False
@@ -277,10 +326,13 @@ class Collector:
                         coverage.failures.append('Transação de outra carteira; excluída.')
                         continue
                     stamp = _timestamp(row)
-                    # A API real aceita apenas um limite temporal. Pedir o
-                    # limite superior impede dados futuros; o inferior é local.
-                    # Sem ordem documentada, linhas antigas não terminam páginas.
+                    # Cada perfil pede só um limite e reaplica localmente
+                    # a sua janela. Sem ordem documentada, linhas antigas
+                    # nunca terminam a paginação.
                     if stamp < start:
+                        continue
+                    if self.recent and stamp >= end:
+                        provider['history_query']['excluded_at_or_after_cutoff'] += 1
                         continue
                     if stamp > end:
                         trader_errors = True
@@ -311,6 +363,8 @@ class Collector:
                         coverage.failures.append('Transferência de outra carteira; excluída.')
                         continue
                     event = normalize_transfer(row, wallet)
+                    if self.recent and event.timestamp == end:
+                        continue  # time_to é inclusivo no contrato; a janela local não é.
                     if not start <= event.timestamp <= end:
                         transfer_errors = True
                         coverage.failures.append('Transferência fora do período; excluída.')
@@ -329,28 +383,33 @@ class Collector:
         except BirdeyeError as exc:
             coverage.failures.append(str(exc))
             complete['transfers'] = False
-        try:
-            pnl, done, meta = self._paged('/wallet/v2/pnl/details', 'POST', {
-                'wallet': wallet, 'duration': 'all', 'pnl_method': 'wac',
-                'position_scope': 'duration_only', 'sort_by': 'last_trade', 'sort_type': 'desc'}, 'tokens')
-            provider['pnl'], provider['pnl_meta'] = pnl, {k: v for k, v in meta.items() if k != 'tokens'}
-            complete['pnl'] = done
-        except BirdeyeError as exc:
-            provider['limitations'].append('PnL informativo indisponível: '+str(exc))
-            complete['pnl'] = False
-        if not complete['pnl']:
-            provider['limitations'].append('PnL informativo sem paginação completa; não demonstra o resultado integral da carteira.')
-        try:
-            holdings, done, meta = self._paged('/wallet/v2/current-net-worth', 'GET', {
-                'wallet': wallet, 'flags': 'include_low_liquidity', 'sort_type': 'desc',
-                'sort_by': 'value'}, 'items')
-            provider['holdings'], provider['holdings_time'] = holdings, meta.get('current_timestamp')
-            complete['holdings'] = done
-        except BirdeyeError as exc:
-            provider['limitations'].append('Inventário indicativo indisponível: '+str(exc))
-            complete['holdings'] = False
-        if not complete['holdings']:
-            provider['limitations'].append('Inventário indicativo sem paginação completa; posições abertas não integralmente verificadas.')
+        collect_optional = self.config.get('api', {}).get('collect_optional', True)
+        if collect_optional:
+            try:
+                pnl, done, meta = self._paged('/wallet/v2/pnl/details', 'POST', {
+                    'wallet': wallet, 'duration': provider['pnl_duration'], 'pnl_method': 'wac',
+                    'position_scope': 'duration_only', 'sort_by': 'last_trade', 'sort_type': 'desc'}, 'tokens')
+                provider['pnl'], provider['pnl_meta'] = pnl, {k: v for k, v in meta.items() if k != 'tokens'}
+                complete['pnl'] = done
+            except BirdeyeError as exc:
+                provider['limitations'].append('PnL informativo indisponível: '+str(exc))
+                complete['pnl'] = False
+            if not complete['pnl']:
+                provider['limitations'].append('PnL informativo sem paginação completa; não demonstra o resultado integral da carteira.')
+            try:
+                holdings, done, meta = self._paged('/wallet/v2/current-net-worth', 'GET', {
+                    'wallet': wallet, 'flags': 'include_low_liquidity', 'sort_type': 'desc',
+                    'sort_by': 'value'}, 'items')
+                provider['holdings'], provider['holdings_time'] = holdings, meta.get('current_timestamp')
+                complete['holdings'] = done
+            except BirdeyeError as exc:
+                provider['limitations'].append('Inventário indicativo indisponível: '+str(exc))
+                complete['holdings'] = False
+            if not complete['holdings']:
+                provider['limitations'].append('Inventário indicativo sem paginação completa; posições abertas não integralmente verificadas.')
+        else:
+            complete['pnl'] = complete['holdings'] = False
+            provider['limitations'].append('PnL, inventário indicativo e detalhes opcionais adiados para reservar quota ao histórico; perdas abertas globais continuam por apurar.')
         # A cobertura descreve o feed observado neste período. Terminar essas
         # páginas não comprova todos os tokens, inventário inicial ou taxas USD.
         observed_history_complete = complete.get('trades') is True and complete.get('transfers') is True
@@ -363,7 +422,7 @@ class Collector:
         }
         provider['limitations'].extend([
             'Retenção integral e universo de tokens não garantidos pelos contratos Standard; cobertura global indeterminada.',
-            'PnL Birdeye usa WAC e duration=all: informativo; não substituir FIFO nem o período de seleção.',
+            f"PnL Birdeye usa WAC e duration={provider['pnl_duration']}: informativo; não substituir FIFO nem o período de seleção.",
             'Taxas históricas em USD e inventário inicial não comprovados.',
             'Preços indicativos de holdings não demonstram liquidez de saída, slippage ou execução reproduzível.',
             'Etiquetas, coordenação, MEV e cobertura de transações falhadas não comprovados.',
@@ -373,6 +432,8 @@ class Collector:
                   for event in events]
         self.store.put_events(events)
         persisted = self.store.get_events(wallet, start, end)
+        if self.recent:
+            persisted = [event for event in persisted if event.timestamp < end]
         # Cursor só avança DEPOIS dos eventos estarem gravados. Crash antes disto
         # apenas repete consultas deduplicáveis, nunca salta eventos por gravar.
         if advance_cursor:
@@ -382,7 +443,7 @@ class Collector:
         provider['discovery_labels']=self.store.discovery_evidence(wallet,end)
         # Enriquecimento limitado: taxas observadas em lamports, separado do FIFO.
         detail_limit=self.config.get('api',{}).get('max_transaction_details_per_wallet',0)
-        if detail_limit:
+        if detail_limit and collect_optional:
             from .transaction_details import enrich_details
             provider['transaction_details']=enrich_details(self.client,persisted,end,detail_limit)
         # Reconciliar multistep flags também em duplicados atualizados pelo Store.
