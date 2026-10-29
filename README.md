@@ -1,6 +1,8 @@
 # Carteiras Solana — Birdeye Standard e Helius Free
 
-A ferramenta descobre candidatas em tokens Solana, reconstrói o histórico disponível e aplica oito verificações obrigatórias. O Telegram recebe **apenas carteiras com todas as verificações APROVADAS e ainda atuais**. Dados insuficientes deixam a verificação INDETERMINADA e bloqueiam o envio. Zero carteiras aprovadas é um resultado válido.
+A ferramenta descobre carteiras em tokens Solana e avalia a consistência das operações disponíveis. O modo predefinido **observed** acrescenta uma seleção para consulta nos relatórios, com oito verificações dos dados observados. Mostra resultados brutos antes de taxas e enumera os aspetos **NÃO VERIFICADOS**. Esta seleção não representa aprovação integral da carteira nem autoriza o seu envio para Telegram.
+
+A avaliação observada separa o que os dados permitem medir das provas globais em falta. As oito verificações **estritas** originais continuam guardadas e são sempre obrigatórias para Telegram: `selection.notifications = "strict"` é a única configuração de envio aceite. Uma reprovação estrita também impede a seleção observada; uma indeterminação estrita fica explícita no relatório. Ativar notificações de seleções observadas depende de autorização expressa para alterar a política de envio e ainda não está implementado. Zero seleções continua a ser um resultado válido.
 
 A integração Helius Free foi autorizada em 28-10-2026 como complemento à Birdeye Standard. Birdeye fornece a seleção de tokens, medidas de mercado e dados já integrados; Helius acrescenta histórico on-chain e procura compradores iniciais observados. Não há fornecedores adicionais nem chamadas a endpoints pagos. GitHub aloja o código e o estado cifrado; Telegram entrega as mensagens. Não se compram ou vendem ativos, não se assinam transações e nunca se pedem seed phrases ou chaves privadas.
 
@@ -28,7 +30,9 @@ A seleção inicial de tokens usa idade de listagem, liquidez, volume e valoriza
 
 “Primeiros compradores observados” não significa uma lista global garantida: consultar só o mint pode não cobrir todas as curvas, pools e migrações. Transações, transferências, distribuições, liquidez e falhas precisam de interpretação e cobertura adequadas. Depois da descoberta, a análise usa o histórico disponível de todos os tokens da carteira, incluindo perdas e posições abertas; não avalia apenas o token que a revelou.
 
-A Helius não torna automaticamente uma carteira aprovável. Taxas em SOL não são custos históricos em USD sem uma conversão comprovada; movimentos desconhecidos não são compras de custo zero. Inventário, execução, liquidez, coordenação e automatização insuficientemente avaliados continuam a bloquear a aprovação. Consulta os [contratos e limites Birdeye](docs/capabilities.md) e [Helius](docs/helius-capabilities.md).
+A seleção observada exige pelo menos 20 tokens distintos com operações fechadas e interpretáveis,14 dias de atividade e resultados em 4 semanas, além dos critérios de consistência, concentração, automatização e tempo de manutenção. Pelo menos 80% dos tokens observados têm de pertencer ao conjunto fechado incluído. Os restantes ficam enumerados como abertos ou desconhecidos, com motivo; não se escolhem só vencedores nem se inventa custo zero para transferências.
+
+A Helius não prova, por si só, inventário inicial, taxas USD completas, cobertura global, liquidez ou execução reproduzível. No modo observado essas lacunas acompanham a seleção como NÃO VERIFICADO; no modo estrito bloqueiam aprovação. Histórico insuficiente para as métricas observadas, informação futura, dados desatualizados ou fontes contraditórias bloqueiam essa seleção. A conclusão da paginação de uma fonte no período não prova cobertura integral da carteira. Consulta os [critérios](docs/criteria.md), os [contratos Birdeye](docs/capabilities.md) e [Helius](docs/helius-capabilities.md).
 
 ## O que recebes e onde consultar
 
@@ -38,9 +42,9 @@ As análises geram HTML, CSV e JSON locais. Para voltar a exportar a partir de u
 python -m wallets.cli report --db state/wallets.sqlite --output reports
 ```
 
-As execuções automáticas guardam o histórico em SQLite cifrado. Relatórios em claro e SQLite nunca são publicados como artefactos do repositório público. Os logs de Actions mostram estados técnicos e limitações, sem credenciais. Nenhum erro, candidata, resultado vazio ou demonstração é enviado ao Telegram.
+As execuções automáticas guardam o histórico em SQLite cifrado. Relatórios em claro e SQLite nunca são publicados como artefactos do repositório público. Os logs de Actions mostram estados técnicos e limitações, sem credenciais. Nenhum erro, lista sem critérios, resultado vazio ou demonstração é enviado ao Telegram.
 
-Uma mensagem elegível inclui endereço completo, rede, período, tokens, resultado realizado e tratamento de custos, resultado sem o melhor token, concentração, perdas abertas, verificações e data. “Aprovada” significa apenas que passou os critérios naquela avaliação: não garante rentabilidade, ausência de fraude ou identidade humana.
+O relatório pode mostrar uma **pré-visualização local, sem envio**, com endereço completo, rede, período, tokens fechados e universo observado, saldo bruto antes de taxas, resultados sem origens/melhor/três melhores, concentração, exclusões, verificações, data e limitações. Posições abertas ou desconhecidas não são apresentadas como perdas zero. “Selecionada” significa apenas que passou os critérios observáveis naquela avaliação: não garante lucro líquido, liquidez, ausência de fraude, identidade humana ou capacidade de repetir a estratégia.
 
 ## Utilização local
 
@@ -65,24 +69,36 @@ Para análise manual, acrescenta `--wallet ENDERECO_PUBLICO_SOLANA` ao comando `
 
 ## Como são tomadas as decisões
 
-- **Dados:** atualidade, período, paginação, truncagem, universo de tokens e falhas registadas. Uma resposta bem-sucedida não prova cobertura completa.
-- **Contabilidade:** `Decimal` e FIFO, com vendas parciais e recompras. Custos desconhecidos permanecem desconhecidos; métricas do fornecedor ficam separadas dos cálculos próprios.
-- **Consistência:** a unidade da amostra é o endereço do token. Repetir operações no mesmo token não aumenta a amostra. Semanas não sobrepostas, perdas abertas e custos desconhecidos contam.
-- **Concentração:** resultado completo, sem origens, sem o melhor e sem os três melhores. O denominador é a soma dos resultados positivos por token.
-- **Automatização e acompanhamento:** vários sinais combinados; uma etiqueta ou o uso de uma interface de trading não excluem automaticamente. Falta de cobertura bloqueia conclusões fortes.
-- **Envio:** todas as oito verificações devem passar. Critérios, evidência e atualidade são novamente verificados antes do HTTP. A tentativa é guardada remotamente antes do envio; entregas incertas não se repetem automaticamente.
+A configuração predefinida é:
 
-Os limites em [`config.toml`](config.toml) são **heurísticas conservadoras**, sem otimização para fazer carteiras observadas passar. Cada fotografia guarda a versão, a configuração efetiva e o respetivo hash. A [justificação dos critérios](docs/criteria.md) define as métricas. Nenhuma pontuação compensa uma reprovação ou indeterminação.
+```toml
+[selection]
+mode = "observed"
+min_closed_token_fraction = 0.8
+notifications = "strict"
+```
+
+- **Dados:** pelo menos uma fonte com histórico paginado suficiente no período; atualidade, identidades e quantidades coerentes; sem informação futura. Uma fonte recolhida não prova todo o universo da carteira.
+- **Contabilidade observada:** valores históricos USD e FIFO dos tokens fechados interpretáveis. O resultado é anterior às taxas. Transferências, rotas desconhecidas, tokens abertos e custos por apurar ficam identificados e fora dessas métricas.
+- **Consistência:** tokens distintos, dias, semanas não sobrepostas, taxa de sucesso, profit factor e retorno mediano do conjunto incluído. Os limiares de amostra e desempenho existentes são preservados.
+- **Concentração:** resultado sem origens, sem o melhor e sem os três melhores; o denominador é a soma dos resultados positivos por token. Uma concentração excessiva bloqueia independentemente das restantes métricas.
+- **Âmbito:** tokens fechados incluídos representam pelo menos 80% dos tokens observados. A percentagem é uma heurística, não cobertura do património. Os tokens excluídos e motivos ficam visíveis.
+- **Automatização e horizonte:** sinais observados combinados e mediana de manutenção de pelo menos 300 segundos; até 20% de fechos rápidos. Uma etiqueta isolada não exclui e não há declaração de identidade humana.
+- **Envio:** as oito verificações estritas originais têm de passar, mesmo com `mode = "observed"`; critérios, estado e atualidade são novamente verificados antes do HTTP. A tentativa é guardada remotamente antes do envio e entregas incertas não se repetem automaticamente.
+
+Para produzir apenas a avaliação original, usa `selection.mode = "strict"` e uma nova versão dos critérios. As verificações estritas são calculadas nos dois modos e continuam a ser a regra de envio. Os resultados parciais observados não as substituem.
+
+Os limites em [`config.toml`](config.toml) são **heurísticas**, sem otimização para fazer carteiras observadas passar. A [justificação dos critérios](docs/criteria.md) explica os dois âmbitos. A versão `2026-10-29.3`, a configuração efetiva e o respetivo hash ficam em cada fotografia. Avaliações antigas não se tornam elegíveis automaticamente por mudar a política.
 
 ## Estado da validação
 
 | Categoria | Limite prático |
 |---|---|
-| Implementado | Descoberta, recolha e reconciliação conservadora Birdeye/Helius, contabilidade, métricas, oito gates, relatórios, Telegram condicionado e persistência cifrada |
-| Testes com fixtures/mocks | Exercitam cálculos, normalização, paginação, quotas, falhas, proveniência, bloqueios Telegram e recuperação; não certificam dados reais |
-| Dados reais | Acesso Birdeye/Helius confirmado; erros de parâmetros corrigidos e sondagem de cinco pedidos aprovada, incluindo duas páginas de transferências. Há recolha real e recuperação do cofre; cobertura insuficiente continua a bloquear aprovação. Ver [entrega](docs/delivery.md) |
-| Limitações | Contratos e histórico recolhido podem ser insuficientes. Falta de dados nunca se transforma em aprovação |
-| Configuração desta instalação | Secrets adicionados pelo utilizador e cofre inicializado. Não voltar a marcar initialize_state; guardar uma cópia da chave. Entrega Telegram real ainda não testada por não existir carteira elegível |
+| Implementado | Descoberta e reconciliação Birdeye/Helius; avaliação estrita preservada e seleção observada com critérios próprios; relatórios e pré-visualização local; Telegram com regra estrita original; persistência cifrada |
+| Testes com fixtures/mocks | Exercitam cálculos, normalização, paginação, quotas, proveniência, bloqueios, seleção observada e recuperação; um teste positivo não certifica uma carteira real |
+| Dados reais | Reavaliação local de dados reais já guardados: 40 carteiras, 741 tokens observados e 218 ciclos fechados com valores conhecidos em históricos ainda insuficientes ou contraditórios; zero seleções e zero envios. Sem novas consultas de mercado. Ver [entrega](docs/delivery.md) |
+| Limitações | Contratos e histórico podem ser insuficientes. Métricas observadas não demonstram o resultado de toda a carteira; requisitos sem prova ficam expressamente NÃO VERIFICADOS |
+| Configuração desta instalação | Secrets adicionados pelo utilizador e cofre inicializado. Não voltar a marcar initialize_state; guardar uma cópia da chave. A nova política exige nova avaliação; não é necessário criar outros secrets nem reinicializar o cofre |
 
 O [acompanhamento posterior](docs/validation.md) guarda observações separadas das seleções imutáveis, sem usar informação futura e sem atribuir ao seguidor o preço original da carteira. Não há simulador de copy trading.
 

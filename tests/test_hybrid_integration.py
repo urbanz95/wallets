@@ -275,7 +275,7 @@ class HybridIntegrationTests(unittest.TestCase):
         self.assertTrue(any(source=='birdeye' for source,_ in calls));notifier.return_value.send.assert_not_called()
         report=json.loads((self.output/'report.json').read_text());self.assertEqual(len(report['evaluations']),1)
         result=report['evaluations'][0];self.assertEqual(result['source'],'birdeye+helius')
-        self.assertFalse(result['coverage']['complete']);self.assertFalse(result['coverage']['fees_complete'])
+        self.assertTrue(result['coverage']['complete']);self.assertFalse(result['coverage']['all_tokens']);self.assertFalse(result['coverage']['fees_complete'])
         self.assertFalse(any(c['status']=='APROVADA' for c in result['checks']))
         saved=self.store.latest_evaluations()[0]
         replay=cli.reevaluate(saved,self.store,self.config,NOW)

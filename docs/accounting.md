@@ -1,5 +1,19 @@
 # Método de contabilidade e significado dos valores
 
+## Dois cálculos separados
+
+A versão de critérios `2026-10-29.3` distingue a contabilidade estrita da seleção por operações observadas. O modo predefinido `observed` usa apenas ciclos interpretáveis e fechados para calcular um **saldo bruto antes de taxas**. Este cálculo serve os relatórios e a pré-visualização local; não autoriza envio para Telegram. Os campos estritos abaixo conservam o seu significado; a seleção observada não os promove artificialmente a valores fiáveis nem substitui resultados desconhecidos por zero. Uma reprovação estrita também impede a seleção observada.
+
+Um token só entra no conjunto fechado observado quando as compras e vendas no período têm quantidades e valores históricos USD conhecidos, os lotes podem ser reconciliados por FIFO e o saldo final observado é zero. Uma venda sem aquisição observada suficiente, uma transferência/distribuição, custo desconhecido, rota com várias etapas ou operação não interpretada impede incluir esse token como resultado conhecido. Operações ambíguas no mesmo segundo também impedem assumir uma ordem FIFO.
+
+Tokens abertos ou desconhecidos ficam fora dessas métricas e são mostrados com motivo. A seleção exige que o conjunto fechado represente pelo menos 80% dos tokens observados, além da amostra e dos restantes critérios; isso não prova 80% do património nem a cobertura global. Um ganho realizado num token ainda aberto não permite fingir que o token inteiro foi encerrado, sobretudo quando existem perdas abertas. Custos de aquisição desconhecidos continuam desconhecidos.
+
+As taxas identificadas são conservadas como informação separada. A falta de uma taxa não impede descrever um resultado explicitamente anterior às taxas, mas impede apresentá-lo como lucro líquido. Não se convertem taxas SOL históricas usando o preço atual. Inventário inicial global, taxas totais, posições fora do conjunto, liquidez e execução permanecem NÃO VERIFICADOS quando faltarem provas.
+
+A flag `coverage.complete` identifica a conclusão da paginação do histórico consultado no período. Não prova a cobertura integral de tokens e protocolos: `coverage.all_tokens` e as provas globais continuam independentes e desconhecidas sem evidência. O resultado observado exige histórico suficiente de pelo menos uma fonte, identidades e quantidades coerentes e ausência de dados futuros.
+
+## Contabilidade estrita preservada
+
 O programa usa FIFO: numa venda, considera consumidas primeiro as unidades
 compradas há mais tempo. Agrupa todas as operações pelo endereço completo do
 token; compras repetidas do mesmo token não aumentam a amostra de tokens.
@@ -47,7 +61,7 @@ intermédias de um swap como operações independentes. A taxa de uma transaçã
 partilhada por várias pernas deve ser alocada uma única vez pelo normalizador;
 na ausência de prova dessa alocação, permanece desconhecida.
 
-Se faltarem inventário inicial, cobertura de todos os tokens, taxas ou páginas
+Na contabilidade estrita, se faltarem inventário inicial, cobertura de todos os tokens, taxas ou páginas
 de histórico, `reliable` permanece falso. Múltiplas operações do mesmo token no mesmo
 segundo também não são declaradas fiáveis quando não há ordenação intrassegundo
 suficiente: até duas compras a preços diferentes podem alterar o FIFO de uma
@@ -73,6 +87,6 @@ uma série adequada do valor da carteira e tratamento dos fluxos externos.
 
 ## Reconciliação Birdeye e Helius
 
-A partir da versão0.2, os dados brutos Helius, os eventos Helius e os eventos Birdeye ficam separados no SQLite. A vista usada para análise escolhe a representação Helius nas assinaturas observadas em ambas as fontes, evitando duplicar posições ou resultados. Valores históricos USD só são associados se token, direção, quantidade, instante e assinatura coincidirem de forma única. Divergências tornam a interpretação indeterminada; dados desconhecidos não são preenchidos por estimativas.
+A partir da versão 0.2, os dados brutos Helius, os eventos Helius e os eventos Birdeye ficam separados no SQLite. A vista usada para análise escolhe a representação Helius nas assinaturas observadas em ambas as fontes, evitando duplicar posições ou resultados. Valores históricos USD só são associados se token, direção, quantidade, instante e assinatura coincidirem de forma única. Divergências tornam a interpretação indeterminada; dados desconhecidos não são preenchidos por estimativas.
 
-Os programas Pump.fun e PumpSwap são reconhecidos por endereços, discriminadores e posições de contas publicados nos IDLs oficiais, fixados num commit documentado no normalizador. O beneficiário da conta de token é identificado separadamente do pagador da taxa. Renda de contas, conversão SOL/wSOL, variantes desconhecidas e rotas múltiplas não são tratados como swaps simples sem reconciliação suficiente. Saldos de USDC/USDT não implicam automaticamente um preço histórico exato de1USD.
+Os programas Pump.fun e PumpSwap são reconhecidos por endereços, discriminadores e posições de contas publicados nos IDLs oficiais, fixados num commit documentado no normalizador. O beneficiário da conta de token é identificado separadamente do pagador da taxa. Renda de contas, conversão SOL/wSOL, variantes desconhecidas e rotas múltiplas não são tratados como swaps simples sem reconciliação suficiente. Saldos de USDC/USDT não implicam automaticamente um preço histórico exato de 1USD.

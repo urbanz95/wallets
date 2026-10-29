@@ -1,4 +1,4 @@
-criteria_version = "2026-10-28.2"
+criteria_version = "2026-10-29.3"
 lookback_days = 90
 max_data_age_hours = 24
 max_evaluation_age_hours = 24
@@ -20,6 +20,12 @@ min_bot_signals = 2
 min_followable_hold_seconds = 300
 notification_cooldown_days = 30
 max_notifications_per_run = 5
+
+# A seleção observada é avaliação local/relatórios; o Telegram mantém os gates estritos.
+[selection]
+mode = "observed"
+min_closed_token_fraction = 0.8
+notifications = "strict"
 
 [api]
 max_requests_per_run = 40

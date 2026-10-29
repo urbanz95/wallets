@@ -8,18 +8,28 @@ Os auxiliares locais `scripts/telegram_chat_id.py` e `scripts/generate_state_key
 
 Guarda a chave do cofre num gestor de palavras-passe e no secret `STATE_ENCRYPTION_KEY`. Uma chave errada, conteúdo alterado ou snapshot inválido interrompem a execução. Não substituas a chave apenas no GitHub: snapshots antigos continuam a precisar da original. Uma migração exige recuperação controlada. A ferramenta nunca pede chaves privadas Solana.
 
+## Avaliação observada e regra de envio
+
+A versão de critérios `2026-10-29.3` usa por defeito `selection.mode = "observed"` para acrescentar a seleção dos dados observados aos relatórios: dados, amostra, contabilidade, consistência, concentração, âmbito suficiente, automatização e horizonte. Uma seleção pode gerar uma pré-visualização local, identificada como **SEM ENVIO**, com os aspetos sem prova como **NÃO VERIFICADO**. Não ativa notificações observadas. `selection.notifications = "strict"` é a única configuração aceite: o Telegram continua a exigir as oito verificações estritas originais. Mudar essa regra depende de autorização expressa e ainda não está implementado.
+
+A seleção usa saldo bruto anterior às taxas dos tokens fechados e interpretáveis; exige pelo menos 20 tokens,14 dias,4 semanas e 80% dos tokens observados no conjunto fechado. Os restantes limiares são os [critérios documentados](criteria.md), não parâmetros ajustados aos resultados já vistos. Tokens excluídos, abertos ou desconhecidos têm de ser apresentados com motivo. Não há aprovação de lucro líquido, cobertura global ou estratégia reproduzível por omissão.
+
+O modo `selection.mode = "strict"` mantém as oito verificações integrais originais e bloqueia quando faltam provas de inventário, custos/taxas, cobertura, posições, liquidez, execução, coordenação ou etiquetas. A avaliação estrita continua no relatório em ambos os modos; uma reprovação estrita também veta a seleção observada. Dados incorretos, futuros, desatualizados, contraditórios ou insuficientes para os critérios observados bloqueiam essa seleção. A conclusão da paginação do feed consultado é distinta da prova de cobertura global da carteira.
+
+A política, a configuração e o hash fazem parte da fotografia imutável. Mudar o modo ou os critérios exige nova avaliação antes de qualquer envio; avaliações antigas não são reenviadas automaticamente. Os mesmos cinco secrets e o mesmo cofre continuam a ser usados. Não voltar a inicializar nem substituir a chave para aplicar esta atualização.
+
 ## Primeiro arranque e execução diária
 
 Em **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow**, marque `initialize_state` uma única vez. O cofre usa o release `wallets-state` neste mesmo repositório. Se já existir, o programa recusa voltar a inicializar, mesmo que esteja vazio ou corrompido.
 
-Para o primeiro teste de acesso, marca também `probe_only`, fornece um endereço público em `wallet` e mantém `notify` desmarcado. São feitas apenas duas consultas controladas, sem análises ou Telegram. Para diagnosticar contratos de carteira, `probe_contracts` executa até cinco consultas Birdeye (92 CU reservados; uma por endpoint e uma continuação de transferências quando existir cursor, sem retentativas), exige `wallet` e também impede análise e Telegram. Não é necessário marcar as duas opções. Se algum contrato falhar ou a estrutura necessária estiver ausente, a sondagem termina com código2 e aparece a vermelho; isto não autoriza análise nem Telegram. O checkpoint final conserva as reservas e o diagnóstico usa apenas métodos, caminhos públicos, tipos de campos e contagens. Nas execuções seguintes, deixa `initialize_state` desmarcado; desmarca também `probe_only` para a análise completa.
+Para o primeiro teste de acesso, marca também `probe_only`, fornece um endereço público em `wallet` e mantém `notify` desmarcado. São feitas apenas duas consultas controladas, sem análises ou Telegram. Para diagnosticar contratos de carteira, `probe_contracts` executa até cinco consultas Birdeye (92 CU reservados; uma por endpoint e uma continuação de transferências quando existir cursor, sem retentativas), exige `wallet` e também impede análise e Telegram. Não é necessário marcar as duas opções. Se algum contrato falhar ou a estrutura necessária estiver ausente, a sondagem termina com código 2 e aparece a vermelho; isto não autoriza análise nem Telegram. O checkpoint final conserva as reservas e o diagnóstico usa apenas métodos, caminhos públicos, tipos de campos e contagens. Nas execuções seguintes, deixa `initialize_state` desmarcado; desmarca também `probe_only` e `probe_contracts` para a análise completa.
 
 A rotina é sequencial:
 
 1. Restaurar e autenticar a geração cifrada mais recente.
 2. Reservar orçamento e guardar checkpoints antes de consultas reais.
 3. Recolher e avaliar; guardar o resultado de forma durável.
-4. Se o envio estiver permitido, verificar novamente a elegibilidade e a atualidade.
+4. Se o envio estiver permitido, verificar novamente as oito condições estritas, a proveniência, o estado persistido e a atualidade; a seleção observada não substitui estas condições.
 5. Registar uma tentativa pendente e guardar esse estado remotamente **antes** de contactar o Telegram.
 6. Guardar o resultado conhecido do envio, ou a incerteza de entrega, e o checkpoint final.
 
@@ -72,7 +82,7 @@ O cliente limita pedidos, créditos por execução, consumo mensal reservado e t
 
 Os limites das contas Birdeye/Helius e a acessibilidade dos endpoints podem mudar. `probe --provider both` faz uma consulta Birdeye (30 CU) e uma Helius (10 créditos), sem retentativas. Confirma apenas os pedidos efetuados; não certifica automaticamente todos os endpoints e não aprova carteiras. Uma resposta 401, 403, 429, quota insuficiente, paginação interrompida ou resposta incompatível fica registada e bloqueia conclusões dependentes. Só se usam Birdeye Standard e o RPC Helius Free explicitamente autorizado. Não há scraping, endpoints privados, serviços adicionais ou upgrades automáticos.
 
-`config.toml` identifica a versão e os limites heurísticos: amostra mínima, períodos, concentração, custo desconhecido, frequência, perdas abertas e cadência de notificações. A decisão exige as oito verificações obrigatórias; uma pontuação elevada não compensa uma reprovação ou uma indeterminação.
+`config.toml` identifica o modo, a versão e os limites heurísticos: amostra mínima, períodos, concentração, fração fechada, frequência e cadência de notificações. A seleção observada exige as suas oito condições para aparecer como selecionada no relatório; uma pontuação elevada não compensa uma reprovação ou indeterminação. As provas globais ausentes continuam separadas e explicitamente NÃO VERIFICADAS. O envio exige sempre as oito verificações estritas, cujas lacunas continuam a bloquear a aprovação.
 
 ## Testes, snapshots e informação futura
 

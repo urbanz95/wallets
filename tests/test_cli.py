@@ -86,6 +86,7 @@ class CLITests(unittest.TestCase):
         result = report['evaluations'][0]
         self.assertEqual(result['wallet'], SOL)
         self.assertFalse(result['coverage']['complete'])
+        self.assertFalse(result['coverage']['all_tokens'])
         self.assertTrue(result['coverage']['failures'])
         self.assertTrue(all(c['status']!='APROVADA' for c in result['checks']))
         self.assertIn('Sem consultas', out)
@@ -175,7 +176,11 @@ class CLITests(unittest.TestCase):
     def test_invalid_config_types_or_paid_sized_quota_fail_safely(self):
         original = CONFIG_PATH.read_text(encoding='utf-8')
         cases = [original.replace('min_tokens = 20','min_tokens = "20"'),
-                 original.replace('monthly_credit_ceiling = 28000','monthly_credit_ceiling = 40000')]
+                 original.replace('monthly_credit_ceiling = 28000','monthly_credit_ceiling = 40000'),
+                 original.replace('mode = "observed"','mode = "unrecognised"'),
+                 original.replace('notifications = "strict"','notifications = "observed"'),
+                 original.replace('min_closed_token_fraction = 0.8','min_closed_token_fraction = 0'),
+                 original.replace('min_closed_token_fraction = 0.8','min_closed_token_fraction = nan')]
         for index, text in enumerate(cases):
             config = self.directory/f'bad-{index}.toml'; config.write_text(text,encoding='utf-8')
             with self.subTest(index=index), patch('wallets.cli.BirdeyeClient') as client:
@@ -288,7 +293,8 @@ class CLITests(unittest.TestCase):
         notifier.return_value.send.assert_not_called()
         report=self.report(); self.assertEqual(len(report['evaluations']),1)
         result=report['evaluations'][0]
-        self.assertFalse(result['coverage']['complete'])
+        self.assertTrue(result['coverage']['complete'])
+        self.assertFalse(result['coverage']['all_tokens'])
         self.assertFalse(result['coverage']['fees_complete'])
         self.assertTrue(all(c['status']!='APROVADA' for c in result['checks']))
         self.assertEqual(result['discovery_tokens'],[MEME])

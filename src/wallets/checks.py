@@ -144,6 +144,22 @@ def evaluate(wallet, events, coverage, token_results, discovery_tokens, config, 
     assert tuple(check.name for check in checks) == REQUIRED_CHECKS
     result = Evaluation(wallet, now, version, coverage, checks, measured, token_results,
                         sorted(set(discovery_tokens)), coverage.source)
+    mode=config.get('selection',{}).get('mode','strict')
+    if mode not in ('strict','observed'):
+        raise ValueError('Política de avaliação desconhecida')
+    if mode=='observed':
+        from .observed_policy import evaluate_observed
+        result.metrics['selection']=evaluate_observed(wallet,events,coverage,provider_metrics,
+                                                       discovery_tokens,config,now)
+        failed=[check for check in checks if check.status==Status.FAIL]
+        if failed:
+            selection=result.metrics['selection']
+            selection['strict_failures']=[{'name':check.name,'reason':check.reason} for check in failed]
+            for check in selection['checks']:
+                if check['name']=='observed_scope':
+                    check['status']=Status.FAIL
+                    check['reason']='Existe uma reprovação integral comprovada; a seleção parcial não a compensa.'
+                    check['evidence']['strict_failures']=selection['strict_failures']
     result.id = sha256(dumps(result.to_dict()).encode()).hexdigest()
     return result
 

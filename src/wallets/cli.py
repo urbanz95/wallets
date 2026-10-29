@@ -35,6 +35,14 @@ def load_config(path):
     for key in ('max_top1_share','max_top3_share','max_unknown_cost_fraction','max_open_loss_fraction',
                 'max_rapid_close_fraction','min_win_rate','min_profitable_week_fraction'):
         if not 0<=config[key]<=1:raise ValueError('Fração de configuração fora de 0..1')
+    selection=config.get('selection',{})
+    if not isinstance(selection,dict) or selection.get('mode','strict') not in ('strict','observed'):
+        raise ValueError('Política de avaliação inválida')
+    if selection.get('notifications','strict')!='strict':
+        raise ValueError('Só notificações estritas estão ativadas; a seleção observada é local')
+    fraction=selection.get('min_closed_token_fraction',0.8)
+    if isinstance(fraction,bool) or not isinstance(fraction,(int,float)) or not 0<fraction<=1:
+        raise ValueError('Fração mínima de ciclos fechados inválida')
     helius=config.get('helius',{})
     if not isinstance(helius,dict) or not isinstance(helius.get('enabled',False),bool):raise ValueError('Ativação Helius inválida')
     if helius.get('enabled',False):

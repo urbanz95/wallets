@@ -72,6 +72,71 @@ def format_message(evaluation):
     ])
 
 
+def format_observed_preview(evaluation):
+    """Pré-visualização LOCAL de critérios observados; não autoriza envio.
+
+    O gate Telegram estrito e format_message permanecem inalterados. Esta
+    representação destina-se a relatórios locais enquanto não houver política
+    explícita autorizada para enviar seleções com verificações por apurar.
+    """
+    selection=evaluation.metrics.get('selection',{})
+    if not isinstance(selection,dict) or selection.get('policy')!='observed-v1':
+        raise ValueError('Pré-visualização observada sem avaliação correspondente')
+    m=selection.get('metrics',{});c=evaluation.coverage
+    if not isinstance(m,dict):raise ValueError('Métricas observadas inválidas')
+    address=escape(evaluation.wallet,quote=True)
+    def number(value):
+        if value is None or isinstance(value,bool):return None
+        try:
+            value=Decimal(str(value))
+            return value if value.is_finite() else None
+        except (ValueError,TypeError,ArithmeticError):return None
+    def amount(value):return _amount(number(value))
+    def percent(value):
+        value=number(value)
+        return _percent(value if value is not None and 0<=value<=1 else None)
+    def count(value):return value if type(value) is int and value>=0 else 'desconhecido'
+    closed=count(m.get('closed_tokens_count'));observed=count(m.get('observed_tokens_count'))
+    checks=selection.get('checks',[])
+    checks=checks if isinstance(checks,list) else []
+    passed=sum(isinstance(check,dict) and check.get('status')==Status.PASS for check in checks)
+    excluded_fraction=None
+    if type(observed) is int and observed>0 and type(closed) is int:
+        excluded_fraction=Decimal(observed-closed)/Decimal(observed)
+    automation=m.get('automation',{})
+    if not isinstance(automation,dict):automation={}
+    holding=m.get('median_holding_seconds')
+    if isinstance(holding,bool):holding=None
+    try:
+        holding=Decimal(str(holding)) if holding is not None else None
+        if holding is not None and not holding.is_finite():holding=None
+    except (ValueError,TypeError,ArithmeticError):holding=None
+    text='\n'.join([
+        '<i>PRÉ-VISUALIZAÇÃO LOCAL — SEM ENVIO</i>',
+        '<b>CARTEIRA SELECIONADA — DADOS OBSERVADOS</b>',
+        f'<code>{address}</code>',
+        'Rede: Solana',
+        f'Período: {local_time(c.start)} a {local_time(c.end)}',
+        f'Tokens: {escape(str(closed))} ciclos fechados de {escape(str(observed))} observados.',
+        f'Resultado BRUTO dos ciclos fechados, antes de taxas: {amount(m.get("gross_result_before_fees"))}',
+        'Âmbito: operações observadas com custo conhecido. Não é lucro líquido nem resultado global da carteira.',
+        f'Sem tokens da descoberta: {amount(m.get("without_discovery"))}',
+        f'Sem o melhor token: {amount(m.get("without_best"))}; sem os três melhores: {amount(m.get("without_top3"))}',
+        f'Concentração na soma dos ganhos positivos: melhor {percent(m.get("top1_share"))}; três melhores {percent(m.get("top3_share"))}',
+        f'Excluídos da amostra: {count(m.get("open_tokens_count"))} abertos; {count(m.get("unknown_tokens_count"))} desconhecidos; total {percent(excluded_fraction)}.',
+        'Perdas e valor de todas as posições abertas: não apurados nesta seleção.',
+        f'Verificações: {passed}/8 critérios observáveis aprovados.',
+        f'Automatização: apenas sinais observados. Manutenção mediana: {holding if holding is not None else "desconhecida"} s; fechos rápidos: {percent(automation.get("rapid_close_fraction"))}.',
+        '<b>NÃO VERIFICADO:</b> inventário inicial; taxas históricas totais em USD; cobertura integral de tokens e protocolos; avaliação de todas as posições abertas.',
+        '<b>NÃO VERIFICADO:</b> liquidez de saída e impacto no preço; execução reproduzível; coordenação/MEV; completude das etiquetas. Identidade humana não confirmada.',
+        f'Avaliação: {local_time(evaluation.evaluated_at)}; critérios {escape(evaluation.criteria_version)}',
+        f'<a href="https://solscan.io/account/{address}">Solscan</a> | <a href="https://birdeye.so/profile/{address}?chain=solana">Birdeye</a>',
+    ])
+    # Nunca remover o endereço ou avisos para caber no limite de uma mensagem.
+    if len(text)>4096:raise ValueError('Pré-visualização acima do limite; conteúdo não truncado')
+    return text
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):
         raise RuntimeError('Redirecionamento Telegram recusado')

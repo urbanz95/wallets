@@ -1,7 +1,7 @@
 """Integra Helius como complemento explícito, com provas e custos desconhecidos."""
 from dataclasses import replace
 from .helius import HeliusError
-from .models import utcnow
+from .models import utcnow, iso
 from .reconciliation import reconcile
 
 
@@ -39,7 +39,22 @@ def augment_with_helius(wallet,start,end,base_events,coverage,provider,history,s
     details['reconciliation']=proof
     provider=dict(provider,helius=details)
     coverage.fetched_at=utcnow()
-    # Concluir páginas de um endereço não prova inventário, taxas USD, todos os
-    # protocolos ou liquidez executável. Nenhum requisito é promovido por flag.
+    # Uma fonte pode concluir o seu âmbito mesmo quando a outra falha. As falhas
+    # continuam registadas, mas não transformam uma fonte completa em incompleta.
+    # Isto certifica páginas do feed observado; nunca o universo global.
+    birdeye_pages=provider.get('pages_complete',{})
+    birdeye_complete=(isinstance(birdeye_pages,dict)
+        and birdeye_pages.get('trades') is True and birdeye_pages.get('transfers') is True)
+    helius_complete=(details.get('pages_complete') is True
+        and details.get('truncated') is False and not details.get('failures'))
+    coverage.complete=birdeye_complete or helius_complete
+    coverage.truncated=not coverage.complete
+    provider['history_scope']={
+        'start':iso(start),'end':iso(end),'pages_complete':coverage.complete,
+        'complete_sources':[name for name,complete in (('birdeye',birdeye_complete),('helius',helius_complete)) if complete],
+        'definition':'paginação do feed observado, não universo global',
+    }
+    # Inventário, taxas USD, todos os protocolos e liquidez continuam por provar;
+    # as respetivas flags globais não são promovidas pelo sucesso de paginação.
     provider['sources']=['birdeye','helius']
     return events,coverage,provider

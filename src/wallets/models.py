@@ -51,6 +51,19 @@ class Status(str, Enum):
     UNKNOWN = 'INDETERMINADA'
 
 REQUIRED_CHECKS = ('data_quality', 'sample', 'accounting', 'consistency', 'concentration', 'open_risk', 'automation', 'followability')
+OBSERVED_REQUIRED_CHECKS = (
+    'observed_data', 'observed_sample', 'observed_accounting',
+    'observed_consistency', 'observed_concentration', 'observed_scope',
+    'observed_automation', 'observed_followability',
+)
+OBSERVED_UNVERIFIED_NAMES = (
+    'opening_inventory', 'fees_usd', 'global_coverage', 'open_positions',
+    'liquidity', 'execution', 'coordination', 'labels',
+)
+_CHECK_FIELDS = frozenset((
+    'name', 'status', 'reason', 'evidence', 'period_start', 'period_end',
+    'coverage', 'evaluated_at', 'criteria_version',
+))
 
 @dataclass(frozen=True)
 class Event:
@@ -128,10 +141,124 @@ class Evaluation:
     id: str = ''
 
     @property
-    def eligible(self):
+    def strict_eligible(self):
+        """Resultado das oito verificações integrais, preservado para auditoria."""
         return (len(self.checks) == len(REQUIRED_CHECKS)
                 and {c.name for c in self.checks} == set(REQUIRED_CHECKS)
                 and all(c.status == Status.PASS for c in self.checks))
+
+    @property
+    def selection_policy(self):
+        """Snapshots antigos continuam estritos; uma política inválida não herda isso."""
+        if not isinstance(self.metrics, dict):
+            return 'invalid'
+        if 'selection' not in self.metrics:
+            return 'strict-v1'
+        selection = self.metrics['selection']
+        policy = selection.get('policy') if isinstance(selection, dict) else None
+        return policy if isinstance(policy, str) and policy else 'invalid'
+
+    @property
+    def decision_checks(self):
+        """Verificações da política aplicada, sem aceitar flags de decisão guardadas."""
+        if isinstance(self.metrics, dict) and 'selection' not in self.metrics:
+            return list(self.checks)
+        if self.selection_policy != 'observed-v1':
+            return []
+        selection = self.metrics['selection']
+        rows = selection.get('checks')
+        if not isinstance(rows, list):
+            return []
+        try:
+            start = parse_time(self.coverage.start)
+            end = parse_time(self.coverage.end)
+            fetched = parse_time(self.coverage.fetched_at)
+            evaluated = parse_time(self.evaluated_at)
+            if not start < end <= fetched <= evaluated:
+                return []
+            checks = []
+            for row in rows:
+                if not isinstance(row, dict) or set(row) != _CHECK_FIELDS:
+                    return []
+                if any(not isinstance(row[key], str) or not row[key].strip()
+                       for key in ('name', 'reason', 'criteria_version')):
+                    return []
+                if not isinstance(row['evidence'], dict) or not isinstance(row['coverage'], dict):
+                    return []
+                dumps(row['evidence'])  # A evidência tem de sobreviver a persistência JSON.
+                # Estes campos são datas do contrato Check; números não são
+                # uma representação admitida para decisões persistidas.
+                if any(not isinstance(row[key], (str, datetime))
+                       for key in ('period_start', 'period_end', 'evaluated_at')):
+                    return []
+                check = Check(
+                    row['name'], Status(row['status']), row['reason'], dict(row['evidence']),
+                    parse_time(row['period_start']), parse_time(row['period_end']),
+                    dict(row['coverage']), parse_time(row['evaluated_at']), row['criteria_version'],
+                )
+                if (check.period_start != start or check.period_end != end
+                        or check.evaluated_at != evaluated
+                        or check.criteria_version != self.criteria_version
+                        or dumps(check.coverage) != dumps(asdict(self.coverage))):
+                    return []
+                checks.append(check)
+            return checks
+        except (ValueError, TypeError, KeyError, OverflowError, AttributeError, RecursionError):
+            return []
+
+    @property
+    def unverified_checks(self):
+        """Limitações explícitas do modo observado, nunca implícitas em um passe."""
+        if self.selection_policy != 'observed-v1':
+            return []
+        rows = self.metrics['selection'].get('unverified')
+        if not isinstance(rows, list) or not rows:
+            return []
+        result = []
+        names = set()
+        for row in rows:
+            if (not isinstance(row, dict)
+                    or not isinstance(row.get('name'), str) or not row['name'].strip()
+                    or not isinstance(row.get('reason'), str) or not row['reason'].strip()
+                    or row['name'] in names):
+                return []
+            names.add(row['name'])
+            result.append({'name': row['name'], 'reason': row['reason']})
+        if names != set(OBSERVED_UNVERIFIED_NAMES):
+            return []
+        return result
+
+    @property
+    def eligible(self):
+        # O envio continua a exigir as oito verificações integrais. A seleção
+        # observada é separada para investigação e pré-visualização local.
+        return self.strict_eligible
+
+    @property
+    def observed_eligible(self):
+        """Seleção para investigação local; não autoriza notificações."""
+        if any(check.status == Status.FAIL for check in self.checks):
+            return False
+        if not isinstance(self.metrics, dict):
+            return False
+        if 'selection' not in self.metrics:
+            return False
+        if self.selection_policy != 'observed-v1':
+            return False
+        selection = self.metrics['selection']
+        scope = selection.get('scope')
+        if (not isinstance(selection.get('metrics'), dict)
+                or not isinstance(scope, str) or not scope.strip()
+                or not self.unverified_checks):
+            return False
+        try:
+            dumps(selection['metrics'])
+        except (ValueError, TypeError, OverflowError, RecursionError):
+            return False
+        checks = self.decision_checks
+        return (len(checks) == len(OBSERVED_REQUIRED_CHECKS)
+                and {check.name for check in checks} == set(OBSERVED_REQUIRED_CHECKS)
+                and all(check.status == Status.PASS for check in checks))
 
     def to_dict(self):
         return asdict(self)

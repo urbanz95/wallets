@@ -73,7 +73,8 @@ class CollectionTests(unittest.TestCase):
         start = NOW - timedelta(days=30)
         events, coverage, provider = collector.collect(WALLET, start, NOW)
         self.assertEqual(len(events), 2)
-        self.assertFalse(coverage.complete)  # páginas completas não provam retenção
+        self.assertTrue(coverage.complete)  # apenas paginação do âmbito observado
+        self.assertFalse(coverage.all_tokens)
         self.assertFalse(coverage.truncated)
         self.assertTrue(provider['pages_complete']['trades'])
         trader_calls = [x for x in client.calls if x[1] == '/trader/txs/seek_by_time']
@@ -237,7 +238,8 @@ class RealBirdeyeConstraintTests(unittest.TestCase):
         self.assertEqual(len(events),2)
         self.assertEqual(provider['pnl_position_scope'],'duration_only')
         self.assertEqual(provider['pnl_duration'],'all')
-        self.assertFalse(coverage.complete)
+        self.assertTrue(coverage.complete)
+        self.assertFalse(coverage.all_tokens)
 
     def test_old_row_does_not_end_pagination_or_hide_in_window_rows_later(self):
         client=FakeClient()

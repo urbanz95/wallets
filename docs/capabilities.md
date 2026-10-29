@@ -136,3 +136,11 @@ Na integração Birdeye, o recolhedor nunca declara cobertura integral, inventá
 Cada verificação obrigatória permanece obrigatória. Sempre que o conjunto gratuito efetivamente recolhido não sustenta taxas, custo, inventário, risco de automatização ou possibilidade de acompanhar com cobertura suficiente, o estado é **INDETERMINADA**. Zero carteiras aprovadas é um resultado válido. Não se enviam candidatas, erros ou explicações de limitações pelo Telegram.
 
 Há recolha real parcial, mas não há rentabilidade validada nem acompanhamento real do desempenho de carteiras aprovadas. Fixtures verificam os algoritmos e bloqueios, não certificam disponibilidade da API nem carteiras reais.
+
+## Avaliação limitada dos dados observados — 29-10-2026
+
+A versão de critérios `2026-10-29.3` separa a paginação concluída do feed (`coverage.complete`) da prova de cobertura global (`coverage.all_tokens`, inventário, custos e execução). O modo `observed` calcula uma seleção adicional para relatórios, com dados históricos USD e ciclos fechados interpretáveis, amostra, consistência, concentração, sinais observados de automatização e horizonte. Não altera os endpoints autorizados nem os respetivos limites gratuitos.
+
+Tokens abertos ou desconhecidos ficam enumerados e fora do resultado bruto dos ciclos fechados. A seleção exige pelo menos80% dos tokens observados incluídos; essa fração mede número de tokens, não valor financeiro nem cobertura do património. Inventário global, taxas totais USD, posições abertas globais, liquidez, execução, coordenação/MEV e etiquetas continuam expressamente NÃO VERIFICADOS.
+
+Esta seleção tem pré-visualização local e não autoriza Telegram. O envio continua a exigir as oito verificações estritas originais; `selection.notifications="strict"` é a única configuração aceite. Alterar essa política depende de autorização expressa e implementação posterior. A [entrega](delivery.md) regista a reavaliação offline e distingue-a de novas consultas autenticadas ou de aprovação real.

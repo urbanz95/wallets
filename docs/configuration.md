@@ -1,4 +1,4 @@
-# Configurar as cinco credenciais
+# Configurar as cinco credenciais e a seleção
 
 Não precisas de escrever código para criar os segredos no GitHub. Os dois pequenos auxiliares abaixo servem apenas para obter o identificador do chat e criar a chave de cifragem no teu computador. Nunca coloques valores reais nesta conversa, em issues, em screenshots ou em ficheiros enviados para o repositório.
 
@@ -76,7 +76,9 @@ Se passar, confirmaste apenas esses pedidos e o acesso das tuas chaves naquele i
 
 Nas execuções seguintes, deixa `initialize_state` desmarcado. Para recolher e analisar, deixa também `probe_only` e `probe_contracts` desmarcados. O campo `wallet` passa a ser opcional para análise manual; a descoberta automática continua a funcionar. Podes deixar `notify` desmarcado durante a primeira análise completa.
 
-A execução diária permite notificações elegíveis. Se nenhuma carteira passar **todas** as verificações, não chega mensagem alguma. A Helius melhora a informação disponível, mas não remove as limitações de cobertura, contabilidade ou automatização: os casos insuficientes continuam INDETERMINADOS.
+A execução diária permite notificações apenas quando passam as oito verificações estritas originais. O modo predefinido **observed** acrescenta uma seleção aos relatórios e uma pré-visualização **LOCAL — SEM ENVIO**: mostra o resultado bruto anterior às taxas e enumera **NÃO VERIFICADO** para inventário inicial, taxas USD completas, cobertura global/posições fora do conjunto, liquidez e condições de execução/coordenação/etiquetas sem prova. Passar os critérios observados não basta para receber uma mensagem.
+
+Se nenhuma carteira passar as verificações estritas, não chega mensagem alguma, mesmo que haja seleções observadas no relatório. Falta de dados para os critérios observados, um histórico insuficiente, dados futuros ou contraditórios impedem essa seleção. Não são enviadas listas sem critérios, erros, logs, testes ou demonstrações.
 
 ### Executar a versão corrigida
 
@@ -84,6 +86,25 @@ Depois de uma atualização, abre **Actions → Análise diária Birdeye e Heliu
 
 Para uma análise normal sem envio manual, deixa `initialize_state`, `probe_only`, `probe_contracts` e `notify` desmarcados; `wallet` pode ficar vazio. As execuções antigas continuam a mostrar o resultado que tiveram. Consulta a execução nova para verificar a correção.
 
-## 6. Depois da configuração
+## 6. Escolher o âmbito da seleção
+
+Não precisas de criar outros secrets nem de reinicializar o cofre para esta atualização. A configuração predefinida em `config.toml` é:
+
+```toml
+[selection]
+mode = "observed"
+min_closed_token_fraction = 0.8
+notifications = "strict"
+```
+
+O modo observado exige pelo menos 20 tokens distintos com operações fechadas e interpretáveis,14 dias e resultados em 4 semanas. Esse conjunto tem de representar pelo menos 80% dos tokens observados, além de passar os limites de consistência, concentração, sinais de automatização e tempo de manutenção. Os tokens abertos ou desconhecidos ficam identificados; não são transformados em resultados zero.
+
+Para produzir apenas a avaliação original, usa `mode = "strict"`. As provas integrais continuam a ser calculadas nos dois modos e são sempre obrigatórias para o envio. Uma reprovação estrita impede também a seleção observada; uma indeterminação estrita permanece visível. A conclusão de páginas do histórico consultado não prova a cobertura integral da carteira.
+
+`notifications = "strict"` é a única opção de envio aceite; mudar `mode` não permite enviar seleções observadas. Essa alteração depende de autorização expressa para uma nova política de notificações e ainda não está implementada.
+
+Mudar o modo ou um limite exige aumentar a versão dos critérios e fazer nova avaliação; as fotografias antigas não passam a ser enviáveis automaticamente. O projeto usa agora a versão `2026-10-29.3`. A [explicação dos critérios](criteria.md) descreve os cálculos e as limitações. Estes são critérios heurísticos, não parâmetros otimizados para fazer as carteiras já vistas passar.
+
+## 7. Depois da configuração
 
 O computador pode ficar desligado: a rotina é executada no GitHub. Os resultados técnicos ficam em Actions e no estado cifrado, nunca no Telegram. Consulta o [guia de operação e recuperação](operations.md) para exportar relatórios, recuperar o cofre e compreender a retenção. O GitHub pode atrasar ou suspender agendamentos; não se promete funcionamento contínuo.

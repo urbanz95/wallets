@@ -294,18 +294,25 @@ class Collector:
                     coverage.failures.append('Transação não interpretável; cobertura insuficiente.')
             events = [replace(event, multi_step=True) if len(tx_instructions.get(event.tx_hash, ())) > 1 else event
                       for event in events]
-            advance_cursor = done and not trader_errors
+            complete['trades'] = done and not trader_errors
+            advance_cursor = complete['trades']
         except BirdeyeError as exc:
             coverage.failures.append(str(exc))
             complete['trades'] = False
         try:
             rows, done = self._transfers(wallet, start, end)
+            transfer_errors = False
             complete['transfers'] = done
             trade_hashes = {event.tx_hash for event in events if event.tx_hash}
             for row in rows:
                 try:
+                    if row.get('owner') and row['owner'] != wallet:
+                        transfer_errors = True
+                        coverage.failures.append('Transferência de outra carteira; excluída.')
+                        continue
                     event = normalize_transfer(row, wallet)
                     if not start <= event.timestamp <= end:
+                        transfer_errors = True
                         coverage.failures.append('Transferência fora do período; excluída.')
                         continue
                     # Sem mapeamento de instruções seguro, não contar as mesmas pernas
@@ -316,7 +323,9 @@ class Collector:
                     else:
                         events.append(event)
                 except (ValueError, TypeError, OverflowError):
+                    transfer_errors = True
                     coverage.failures.append('Transferência não interpretável.')
+            complete['transfers'] = done and not transfer_errors
         except BirdeyeError as exc:
             coverage.failures.append(str(exc))
             complete['transfers'] = False
@@ -327,8 +336,10 @@ class Collector:
             provider['pnl'], provider['pnl_meta'] = pnl, {k: v for k, v in meta.items() if k != 'tokens'}
             complete['pnl'] = done
         except BirdeyeError as exc:
-            coverage.failures.append(str(exc))
+            provider['limitations'].append('PnL informativo indisponível: '+str(exc))
             complete['pnl'] = False
+        if not complete['pnl']:
+            provider['limitations'].append('PnL informativo sem paginação completa; não demonstra o resultado integral da carteira.')
         try:
             holdings, done, meta = self._paged('/wallet/v2/current-net-worth', 'GET', {
                 'wallet': wallet, 'flags': 'include_low_liquidity', 'sort_type': 'desc',
@@ -336,15 +347,22 @@ class Collector:
             provider['holdings'], provider['holdings_time'] = holdings, meta.get('current_timestamp')
             complete['holdings'] = done
         except BirdeyeError as exc:
-            coverage.failures.append(str(exc))
+            provider['limitations'].append('Inventário indicativo indisponível: '+str(exc))
             complete['holdings'] = False
-        # Paginação esgotada != garantia de retenção nem de inventário inicial.
-        coverage.truncated = not all(complete.values())
-        coverage.complete = False
-        coverage.all_tokens = False
-        coverage.failures.append('Retenção integral e universo de tokens não garantidos pelos contratos Standard; cobertura indeterminada.')
+        if not complete['holdings']:
+            provider['limitations'].append('Inventário indicativo sem paginação completa; posições abertas não integralmente verificadas.')
+        # A cobertura descreve o feed observado neste período. Terminar essas
+        # páginas não comprova todos os tokens, inventário inicial ou taxas USD.
+        observed_history_complete = complete.get('trades') is True and complete.get('transfers') is True
+        coverage.complete = observed_history_complete
+        coverage.truncated = not observed_history_complete
         provider['pages_complete'] = complete
+        provider['history_scope'] = {
+            'start': iso(start), 'end': iso(end), 'pages_complete': observed_history_complete,
+            'definition': 'paginação do feed observado, não universo global',
+        }
         provider['limitations'].extend([
+            'Retenção integral e universo de tokens não garantidos pelos contratos Standard; cobertura global indeterminada.',
             'PnL Birdeye usa WAC e duration=all: informativo; não substituir FIFO nem o período de seleção.',
             'Taxas históricas em USD e inventário inicial não comprovados.',
             'Preços indicativos de holdings não demonstram liquidez de saída, slippage ou execução reproduzível.',
