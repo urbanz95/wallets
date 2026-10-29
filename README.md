@@ -80,7 +80,7 @@ Os limites em [`config.toml`](config.toml) são **heurísticas conservadoras**, 
 |---|---|
 | Implementado | Descoberta, recolha e reconciliação conservadora Birdeye/Helius, contabilidade, métricas, oito gates, relatórios, Telegram condicionado e persistência cifrada |
 | Testes com fixtures/mocks | Exercitam cálculos, normalização, paginação, quotas, falhas, proveniência, bloqueios Telegram e recuperação; não certificam dados reais |
-| Dados reais | Acesso autenticado Birdeye/Helius confirmado; análise de29-10-2026 recuperada do cofre:10 carteiras avaliadas, zero aprovadas. Persistem lacunas de cobertura e erros de contrato; ver [entrega](docs/delivery.md) |
+| Dados reais | Acesso Birdeye/Helius confirmado; erros de parâmetros corrigidos e sondagem de cinco pedidos aprovada, incluindo duas páginas de transferências. Há recolha real e recuperação do cofre; cobertura insuficiente continua a bloquear aprovação. Ver [entrega](docs/delivery.md) |
 | Limitações | Contratos e histórico recolhido podem ser insuficientes. Falta de dados nunca se transforma em aprovação |
 | Configuração desta instalação | Secrets adicionados pelo utilizador e cofre inicializado. Não voltar a marcar initialize_state; guardar uma cópia da chave. Entrega Telegram real ainda não testada por não existir carteira elegível |
 
