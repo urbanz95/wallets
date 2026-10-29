@@ -287,7 +287,7 @@ def probe_contracts(args,config):
                 # sem percorrer todo o histórico nem guardar o cursor nos logs.
                 if path=='/wallet/v2/transfer' and 'cursor' not in query:
                     cursor=result.get('next_cursor')
-                    if cursor:
+                    if cursor is not None and cursor != '':
                         if isinstance(cursor,str) and len(cursor)<=65536:
                             requests.append(('POST',path,{'wallet':args.wallet,'cursor':cursor}))
                         else:

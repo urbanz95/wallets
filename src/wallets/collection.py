@@ -232,10 +232,12 @@ class Collector:
                 raise InvalidResponse('Registo de transferência Birdeye malformado.')
             rows.extend(items)
             cursor = result.get('next_cursor')
-            if not cursor:
+            if cursor is None or cursor == '':
                 # Documentação textual refere cursor, schema não garante campo.
                 # Uma página cheia sem cursor não prova fim do histórico.
                 return rows, len(items) < 100
+            if not isinstance(cursor,str) or len(cursor)>65536:
+                raise InvalidResponse('Cursor de transferências Birdeye inválido; cobertura não confirmada.')
             if cursor in seen or not items:
                 return rows, False
             seen.add(cursor)

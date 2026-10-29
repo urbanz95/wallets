@@ -433,3 +433,15 @@ class TransferContinuationProbeTests(unittest.TestCase):
         self.assertEqual(len(bodies),2)
         self.assertNotIn('PRIVATE-',out+err)
         notifier.assert_not_called()
+
+    def test_invalid_false_cursor_is_not_reported_as_confirmed_contract(self):
+        def transport(request):
+            path=urlsplit(request.full_url).path
+            if path=='/wallet/v2/transfer':return {'success':True,'data':[],'next_cursor':False}
+            if path=='/wallet/v2/pnl/details':return {'data':{'tokens':[]}}
+            return {'success':True,'data':{'items':[]},'pagination':{'total':0}}
+        def factory(key,store,config):return BirdeyeClient(key,store,config,transport=transport,clock=lambda:NOW,sleep=lambda _:None)
+        with patch.dict(os.environ,{'BIRDEYE_API_KEY':'PRIVATE-KEY'}),patch('wallets.cli.BirdeyeClient',side_effect=factory):
+            code,out,err=self.call('probe','--contracts','--wallet',SOL)
+        self.assertEqual(code,2)
+        self.assertIn('Cursor de transferências inválido',out)

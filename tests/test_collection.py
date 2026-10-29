@@ -278,3 +278,11 @@ class TransferContinuationTests(unittest.TestCase):
         self.assertTrue(complete)
         self.assertEqual([row['tx_hash'] for row in rows],['first','second'])
         self.assertEqual(len(calls),2)
+
+    def test_invalid_cursor_never_means_end_of_transfer_history(self):
+        from wallets.birdeye import InvalidResponse
+        for cursor in (False,0,[],{},True,'x'*65537):
+            client=FakeClient()
+            client.request=lambda *args,**kwargs: {'success':True,'data':[],'next_cursor':cursor}
+            with self.subTest(cursor_type=type(cursor).__name__),self.assertRaises(InvalidResponse):
+                self.collector(client)._transfers(WALLET,NOW-timedelta(days=30),NOW)
