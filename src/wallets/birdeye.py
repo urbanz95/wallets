@@ -4,6 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 from hashlib import sha256
 import json
+from io import BytesIO
 import math
 import re
 import time
@@ -11,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 from .models import dumps, utcnow
+from .api_diagnostics import extract_private_diagnostic
 
 # Não aceitar URLs arbitrários, RPC, endpoints privados ou upgrades automáticos.
 ENDPOINTS = {
@@ -176,7 +178,14 @@ class BirdeyeClient:
                         continue
                 if status == 429:
                     self._halted = True
-                diagnostic = validation_diagnostic(exc, set(params or {}) | set(body or {}), self.api_key) if status in (400, 422) else ''
+                diagnostic = ''
+                if status in (400,422):
+                    try:raw=exc.read(16385)
+                    except (OSError,ValueError):raw=b''
+                    diagnostic=validation_diagnostic(BytesIO(raw),set(params or {}) | set(body or {}),self.api_key)
+                    private=extract_private_diagnostic(raw,self.api_key)
+                    if private:
+                        self.store.record_api_failure('birdeye',method+' '+path,status,self.clock(),private)
                 raise BirdeyeError(f'Falha HTTP Birdeye ({status}) em {method} {path}; análise incompleta.'+diagnostic) from None
             except (URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError):
                 if attempt < self.config.get('max_retries', 2):

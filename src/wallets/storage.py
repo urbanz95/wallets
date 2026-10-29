@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS discovery_observations(id TEXT PRIMARY KEY,wallet TEX
 CREATE TABLE IF NOT EXISTS token_selections(id TEXT PRIMARY KEY,token TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cursors(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY,expires TEXT NOT NULL,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS api_failures(id TEXT PRIMARY KEY,source TEXT NOT NULL,endpoint TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS immutable_api_failure_update BEFORE UPDATE ON api_failures BEGIN SELECT RAISE(ABORT,'immutable API diagnostic'); END;
+CREATE TRIGGER IF NOT EXISTS immutable_api_failure_delete BEFORE DELETE ON api_failures BEGIN SELECT RAISE(ABORT,'immutable API diagnostic'); END;
 CREATE TABLE IF NOT EXISTS budgets(month TEXT PRIMARY KEY,credits INTEGER NOT NULL CHECK(credits>=0));
 CREATE TABLE IF NOT EXISTS provider_budgets(namespace TEXT NOT NULL,month TEXT NOT NULL,credits INTEGER NOT NULL CHECK(credits>=0),PRIMARY KEY(namespace,month));
 CREATE TABLE IF NOT EXISTS source_transactions(source TEXT NOT NULL,address TEXT NOT NULL,signature TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,address,signature));
@@ -150,6 +153,18 @@ class Store:
         with self.db:
             cursor=self.db.execute('DELETE FROM cache WHERE expires<=?',(iso(now),))
             return cursor.rowcount
+
+    def record_api_failure(self,source,endpoint,status,when,diagnostic):
+        """Mensagem já redigida: apenas cofre privado, nunca relatórios ou Telegram."""
+        if source != 'birdeye' or status not in (400,422):
+            raise ValueError('Diagnóstico fora do âmbito permitido')
+        payload=dumps({'http_status':status,'diagnostic':diagnostic})
+        at=iso(when)
+        identity=hashlib.sha256(dumps([source,endpoint,at,payload]).encode()).hexdigest()
+        with self.db:
+            self.db.execute('INSERT OR IGNORE INTO api_failures VALUES(?,?,?,?,?)',
+                            (identity,source,endpoint,at,payload))
+        return identity
 
     def reserve_budget(self,month,cost,ceiling,namespace='birdeye'):
         if namespace not in ('birdeye','helius'):raise ValueError('Fornecedor não permitido')

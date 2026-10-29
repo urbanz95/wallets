@@ -60,6 +60,12 @@ Uma cópia com a **mesma geração mais recente** pode repor um asset danificado
 
 Se o Telegram aceitar uma mensagem mas a ligação cair antes de responder, não é possível provar a entrega. A tentativa fica incerta e não é repetida automaticamente. Esta escolha pode perder uma notificação; evita repetições indefinidas e mantém o Telegram reservado a avaliações elegíveis. Consulte o estado local para uma decisão manual.
 
+## Diagnóstico privado da Birdeye
+
+A resposta oficial de erro pode usar `message` em vez de uma lista `detail`. Em HTTP400/422, a ferramenta guarda a mensagem limitada e redigida na tabela imutável `api_failures` do SQLite. São removidos a chave API, variantes codificadas e URLs; cabeçalhos, pedidos, inputs e restantes campos remotos não são guardados. O diagnóstico integra apenas o cofre cifrado e não entra nos logs de Actions, HTML/CSV/JSON ou Telegram. Não altera nenhuma verificação de elegibilidade.
+
+Este registo permite distinguir um parâmetro recusado, falta de dados ou indisponibilidade efetiva, sem experimentar endpoints ou planos alternativos. Os logs públicos continuam a mostrar apenas método/caminho, estado HTTP e estrutura limitada. Uma sondagem que falha mantém código de saída não zero; não se muda para sucesso apenas para remover o indicador vermelho.
+
 ## Orçamento gratuito e dados insuficientes
 
 O cliente limita pedidos, créditos por execução, consumo mensal reservado e tentativas. Birdeye e Helius têm contadores e reservas independentes, conforme `config.toml`. A configuração inicial Birdeye reserva até 800 CU por execução e 28 000 CU por mês; 31 reservas de 800 CU totalizam 24 800 CU. A Helius tem limites próprios inferiores à quota Free. São limites locais conservadores, não créditos adicionais. Cada repetição consome orçamento. A reserva durável antes da rede evita que uma falha do runner faça esquecer o consumo. Reservas conservadoras podem fazer parar a análise antes de esgotar efetivamente a quota da conta.

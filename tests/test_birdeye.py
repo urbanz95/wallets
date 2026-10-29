@@ -9,11 +9,13 @@ NOW = datetime(2026, 10, 28, tzinfo=timezone.utc)
 
 class Store:
     def __init__(self):
-        self.cache, self.costs = {}, []
+        self.cache, self.costs, self.failures = {}, [], []
     def cache_get(self, key, now):
         entry = self.cache.get(key)
         return entry[0] if entry and entry[1] > now else None
     def cache_put(self, key, value, expiry): self.cache[key] = (value, expiry)
+    def record_api_failure(self,source,endpoint,status,when,diagnostic):
+        self.failures.append((source,endpoint,status,when,diagnostic))
     def reserve_budget(self, month, cost, ceiling):
         if sum(self.costs) + cost > ceiling: return False
         self.costs.append(cost)
@@ -141,3 +143,31 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn('secret',text)
         self.assertIn('"lt": 3',text)
         for field in ('"le"','"ge"','"maximum"'):self.assertNotIn(field,text)
+
+
+class PrivateDiagnosticIntegrationTests(unittest.TestCase):
+    def test_remote_message_is_redacted_and_only_in_private_storage_not_exception(self):
+        import tempfile
+        import sqlite3
+        from pathlib import Path
+        from wallets.storage import Store as SQLiteStore
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'state.sqlite'
+            with SQLiteStore(path) as store:
+                def transport(request):
+                    raw=json.dumps({'success':False,'message':'Invalid limit; key=secret-never-log',
+                                    'request':{'headers':{'X-API-KEY':'secret-never-log'}}}).encode()
+                    raise HTTPError(request.full_url,422,'PRIVATE',{},BytesIO(raw))
+                client=BirdeyeClient('secret-never-log',store,{'max_retries':0},transport=transport,
+                                     clock=lambda:NOW,sleep=lambda _:None)
+                with self.assertRaises(BirdeyeError) as failure:
+                    client.request('GET','/trader/txs/seek_by_time',{'limit':1})
+                self.assertNotIn('Invalid limit',str(failure.exception))
+                self.assertNotIn('secret-never-log',str(failure.exception))
+                row=store.db.execute('SELECT id,payload FROM api_failures').fetchone()
+                self.assertIn('Invalid limit',row[1])
+                self.assertNotIn('secret-never-log',row[1])
+                self.assertNotIn('headers',row[1])
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with store.db:store.db.execute('DELETE FROM api_failures WHERE id=?',(row[0],))
+            self.assertNotIn(b'secret-never-log',path.read_bytes())
