@@ -86,6 +86,7 @@ def prefilter_wallet(client, wallet, days, config, now):
             if not data['tokens']:
                 result['reasons'].append('pnl_empty_nonterminal_page'); break
     except BirdeyeError as exc:
+        result['raw_metrics']['failure_http_status']=getattr(client,'last_http_status',None)
         result['reasons'].append('pnl_unavailable:'+type(exc).__name__)
         return result
 

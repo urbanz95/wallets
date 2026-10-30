@@ -102,7 +102,11 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     counts['candidates']=len(candidates)+len(found.get('rejections',[]))
     counts['pre_filter']=len(candidates)
     for row in found.get('rejections',[]):histogram.update(_codes(row.get('reasons',[])))
-    for row in found.get('errors',[]):histogram.update(['discovery_source_unavailable'])
+    for row in found.get('errors',[]):
+        histogram.update(['discovery_source_unavailable'])
+        status=row.get('http_status')
+        if type(status) is int and status in (400,401,402,403,422,429,500,502,503,504):
+            histogram.update(['source_http_'+str(status)])
     assessed=[]
     pre_candidates=candidates[:int(settings.get('max_prefilters',7))]
     pnl_page_cost=30*max(1,int(settings.get('prefilter_max_pages',1)))
@@ -159,7 +163,7 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     telemetry={'started_at':now,'stages':counts,'budget':budget.stats,
                'rejections':dict(histogram),'ranking_levels':dict(levels)}
     save_run(store,{'profile':settings.get('version',config['criteria_version']),'criteria':config,
-                    'started_at':now,'finished_at':utcnow(),'candidates':assessed,
+                    'started_at':now,'finished_at':utcnow(),'candidates':assessed,'discovery_errors':found.get('errors',[]),
                     'ranking':ranked,'telemetry':telemetry})
     checkpoint()
     report=write_profit_reports(ranked,telemetry,output)

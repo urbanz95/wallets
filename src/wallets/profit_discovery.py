@@ -144,7 +144,7 @@ def discover(client, store, config, now):
                 reject(wallet, ['provider_pnl_not_positive'], evidence); continue
             add(wallet, evidence)
     except BirdeyeError as exc:
-        errors.append({'stage': 'discovery_gainers', 'reason': type(exc).__name__})
+        errors.append({'stage': 'discovery_gainers', 'reason': type(exc).__name__, 'http_status':getattr(client,'last_http_status',None)})
         if isinstance(exc, (AccessDenied, BudgetExceeded)):
             return result()
 
@@ -165,7 +165,7 @@ def discover(client, store, config, now):
     try:
         token_rows = _items(client.request('GET', '/defi/v3/token/list', params))
     except BirdeyeError as exc:
-        errors.append({'stage': 'discovery_tokens', 'reason': type(exc).__name__})
+        errors.append({'stage': 'discovery_tokens', 'reason': type(exc).__name__, 'http_status':getattr(client,'last_http_status',None)})
         return result()
     seen = set()
     for token in token_rows:
@@ -225,7 +225,7 @@ def discover(client, store, config, now):
                         'recent_listing_time': iso(listed), **evidence,
                     })
         except BirdeyeError as exc:
-            errors.append({'stage': 'discovery_token_traders', 'reason': type(exc).__name__})
+            errors.append({'stage': 'discovery_token_traders', 'reason': type(exc).__name__, 'http_status':getattr(client,'last_http_status',None)})
             if isinstance(exc, (AccessDenied, BudgetExceeded)):
                 break
         if len(selected_tokens) >= maximum_tokens:

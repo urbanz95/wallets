@@ -108,6 +108,7 @@ class BirdeyeClient:
         self.network_verified = False
         self._last_call = None
         self._halted = False
+        self.last_http_status = None
 
     @staticmethod
     def _http(request):
@@ -168,6 +169,7 @@ class BirdeyeClient:
                 return result
             except HTTPError as exc:
                 status = exc.code
+                self.last_http_status = status
                 if status in (401, 402, 403):
                     self._halted = True
                     raise AccessDenied(f'Birdeye recusou acesso ({status}) em {method} {path}; sem alternativa de fornecedor/plano.') from None
