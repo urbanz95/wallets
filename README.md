@@ -1,4 +1,4 @@
-> **Branch experimental de ranking por lucro:** ver [utilização e limites](docs/profit-experiment.md). Execução manual, sem Telegram; identidades apenas no estado cifrado e no Excel privado. A `main` não foi alterada.
+> **Branch experimental de ranking por lucro:** ver [como executar a experiência](docs/profit-experiment.md). Seleciona `feat/profit-evidence-funnel` em **Run workflow**. A experiência é manual e o Telegram está sempre desligado. Os passos gerais abaixo descrevem a `main`.
 
 # Carteiras Solana — Birdeye Standard e Helius Free
 

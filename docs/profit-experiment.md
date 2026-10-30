@@ -71,3 +71,12 @@ A sondagem real de30CU confirmou HTTP200 na Wallet API após HTTP429 na lista de
 Os circuitos partilham também o último instante de pedido (1 pedido/s por conta) e `Retry-After`. O prazo é guardado no estado privado; esperas superiores a60s adiam a consulta antes de reservar créditos, em vez de reduzir o prazo ou insistir. Na ausência de `Retry-After`, um429 impõe60s antes de outra família tentar acesso.
 
 A revisão `2026-10-30.profit.3` pode aprofundar7d quando a consulta30d falha tecnicamente, apenas para obter evidência B. PnL30d positivo continua obrigatório para A; dados30d desconhecidos não são presumidos positivos. Falhas conhecidas do pré-filtro continuam a excluir dessa passagem.
+
+
+## Se o GitHub rejeitar o arranque
+
+O workflow da main e o experimental partilham o nome registado em Actions, mas têm opções diferentes. O stub experimental aceita agora também os cinco campos antigos: `initialize_state`, `probe_only`, `probe_contracts`, `wallet` e `notify`. Assim, um formulário com esses campos não é rejeitado por nomes de inputs desconhecidos.
+
+Neste branch `notify` e `wallet` são ignorados; não são enviados para comandos nem aparecem nos logs. `initialize_state` faz apenas validação sem quota e nunca reinicializa um cofre. `probe_only` e `probe_contracts` fazem somente a sondagem de um pedido Wallet API, até30CU; não executam a análise completa. Com todas as opções desmarcadas e wallet vazio, executa-se a experiência normal.
+
+`validate_only` permite confirmar instalação, testes e arranque do workflow sem receber credenciais de mercado, consultar fornecedores, restaurar/gravar cofres ou enviar Telegram. É também usado para validar a compatibilidade do formulário sem gastar quota. Uma rejeição do formulário pode não criar uma execução; nesse caso, a mensagem apresentada pelo GitHub permite confirmar a causa. Falhas antigas continuam visíveis no histórico, mesmo depois da correção.

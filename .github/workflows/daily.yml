@@ -3,6 +3,32 @@ name: Experiência por lucro — branch sem Telegram
 on:
   workflow_dispatch:
     inputs:
+      # Compatibilidade com o formulário do workflow registado na main.
+      # Nunca encaminhar wallet/notify para comandos, logs ou notificações.
+      initialize_state:
+        description: 'Compatibilidade: validação sem quota; nunca reinicializa cofres neste branch'
+        type: boolean
+        default: false
+      probe_only:
+        description: 'Compatibilidade: uma sondagem Wallet API, até 30 CU, sem Telegram'
+        type: boolean
+        default: false
+      probe_contracts:
+        description: 'Compatibilidade: uma sondagem Wallet API, até 30 CU, sem Telegram'
+        type: boolean
+        default: false
+      wallet:
+        description: 'Ignorado neste branch; deixar vazio. Usam-se candidatas do estado privado.'
+        type: string
+        default: ''
+      notify:
+        description: 'Ignorado neste branch: Telegram sempre desligado'
+        type: boolean
+        default: false
+      validate_only:
+        description: 'Só instalação e testes; sem consultas, quota, cofres ou Telegram'
+        type: boolean
+        default: false
       probe_wallet_access:
         description: 'Sondagem: só um pedido à API de carteiras (30 CU), sem Telegram'
         type: boolean
@@ -13,7 +39,8 @@ jobs:
   experiment:
     uses: ./.github/workflows/profit.yml
     with:
-      probe_wallet_access: ${{ inputs.probe_wallet_access }}
+      probe_wallet_access: ${{ inputs.probe_wallet_access || inputs.probe_only || inputs.probe_contracts }}
+      validate_only: ${{ inputs.validate_only || inputs.initialize_state }}
     secrets:
       STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
       BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
