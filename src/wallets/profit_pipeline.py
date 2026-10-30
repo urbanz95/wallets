@@ -58,7 +58,7 @@ def _codes(values):
         'execution_intensity','holding_horizon','identity','cohort_exclusion','sol_costs',
         'pnl_unavailable','excluded_tag','discovery_activity_outside_window',
         'discovery_time_unknown','unsupported_network','pnl_pagination_changed',
-        'pnl_token_schema_unknown','pnl_duplicate_token','pnl_pagination_incoherent'}
+        'pnl_token_schema_unknown','pnl_duplicate_token','pnl_pagination_incoherent','pnl_wallet_mismatch'}
     for value in values:
         code=value.split(':',1)[0] if isinstance(value,str) else ''
         result.append(code if code in allowed else 'other_data_limitation')
@@ -149,8 +149,12 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
             candidate['deep']=deep
             histogram.update(_codes(deep['reasons']))
             checkpoint()
-    ranked=rank_candidates(assessed,config,utcnow());counts['top3']=len(ranked)
-    for row in ranked:histogram.update(_codes(row.get('reason_codes',[])))
+    evaluated_at=utcnow()
+    ranked=rank_candidates(assessed,config,evaluated_at);counts['top3']=len(ranked)
+    # Histograma de toda a amostra consultada, não apenas dos três primeiros.
+    for candidate in assessed:
+        for row in rank_candidates([candidate],config,evaluated_at):
+            histogram.update(_codes(row.get('reason_codes',[])))
     levels=Counter(row.get('evidence_level','C') for row in ranked)
     telemetry={'started_at':now,'stages':counts,'budget':budget.stats,
                'rejections':dict(histogram),'ranking_levels':dict(levels)}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from .analysis import SETTLEMENT_TOKENS
 from .birdeye import BirdeyeError
 from .collection import decimal, valid_address
 from .models import iso, parse_time
@@ -43,6 +44,7 @@ def prefilter_wallet(client, wallet, days, config, now):
     maximum_pages = max(1, min(100, int(settings.get('prefilter_max_pages', 1))))
     raw_rows, summary, snapshot_at = [], None, None
     seen_tokens = set()
+    settlement_tokens = set()
     completed = False
     try:
         for page in range(maximum_pages):
@@ -54,6 +56,9 @@ def prefilter_wallet(client, wallet, days, config, now):
             data = response.get('data') if isinstance(response, dict) else None
             if not isinstance(data, dict) or not isinstance(data.get('tokens'), list) or not isinstance(data.get('summary'), dict):
                 result['reasons'].append('pnl_schema_unknown'); return result
+            meta=data.get('meta')
+            if isinstance(meta,dict) and meta.get('address',wallet) != wallet:
+                result['reasons'].append('pnl_wallet_mismatch'); return result
             candidate_summary = data['summary']
             if summary is not None and summary != candidate_summary:
                 result['reasons'].append('pnl_pagination_changed'); return result
@@ -69,9 +74,13 @@ def prefilter_wallet(client, wallet, days, config, now):
                 if token in seen_tokens:
                     result['reasons'].append('pnl_duplicate_token'); return result
                 seen_tokens.add(token)
+                if token in SETTLEMENT_TOKENS:
+                    settlement_tokens.add(token)
+                    continue
                 raw_rows.append(token_row)
             if len(raw_rows) > total:
-                result['reasons'].append('pnl_pagination_incoherent'); return result
+                result['limitations'].append('Contagem da lista diverge de summary.unique_tokens; métricas por token NÃO VERIFICADAS. O headline é mantido separadamente.')
+                break
             if len(raw_rows) == total:
                 completed = True; break
             if not data['tokens']:
@@ -91,6 +100,7 @@ def prefilter_wallet(client, wallet, days, config, now):
     result['unrealized_pnl_usd'] = _nested(summary, 'pnl', 'unrealized_usd')
     result['raw_metrics'].update({
         'snapshot_at': snapshot_at, 'unique_tokens': result['tokens_count'],
+        'excluded_settlement_tokens_count':len(settlement_tokens),
         'counts': {key: decimal(counts.get(key)) for key in ('total_buy','total_sell','total_trade','total_win','total_loss','win_rate')},
         'cashflow_usd': {key: _nested(summary,'cashflow_usd',key) for key in ('total_invested','total_sold','current_value')},
         'pnl': {key: _nested(summary,'pnl',key) for key in ('realized_profit_usd','realized_profit_percent','unrealized_usd','total_usd','avg_profit_per_trade_usd')},

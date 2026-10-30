@@ -137,5 +137,29 @@ class ProfitPrefilterTests(unittest.TestCase):
             with self.assertRaises(ValueError):prefilter_wallet(client,wallet,days,{},NOW)
         self.assertEqual(client.calls,[])
 
+    def test_settlement_rows_are_not_speculative_tokens_or_pagination_errors(self):
+        from wallets.models import SOL
+        from wallets.analysis import SETTLEMENT_TOKENS
+        rows=[token(0,10),token(1,-1)]
+        for address in SETTLEMENT_TOKENS:
+            row=token(2,1000);row['address']=address;rows.append(row)
+        r=prefilter_wallet(Client(response(rows,total=2,pnl=9)),WALLET,7,{},NOW)
+        self.assertTrue(r['passed']);self.assertTrue(r['complete'])
+        self.assertEqual(len(r['tokens']),2)
+        self.assertEqual(r['profit_factor'],10)
+        self.assertEqual(r['raw_metrics']['excluded_settlement_tokens_count'],len(SETTLEMENT_TOKENS))
+
+    def test_inconsistent_token_count_does_not_fabricate_ratios_or_erase_headline(self):
+        r=prefilter_wallet(Client(response([token(0,10),token(1,-1)],total=1,pnl=9)),WALLET,7,{},NOW)
+        self.assertTrue(r['passed']);self.assertFalse(r['complete'])
+        self.assertEqual(r['pnl_usd'],9)
+        self.assertIsNone(r['profit_factor']);self.assertIsNone(r['top1_share'])
+        self.assertIn('NÃO VERIFICADAS',' '.join(r['limitations']))
+
+    def test_response_wallet_identity_must_match_when_provided(self):
+        value=response([token(0,10)]);value['data']['meta']['address']='B'*44
+        r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
+        self.assertFalse(r['passed']);self.assertIn('pnl_wallet_mismatch',r['reasons'])
+
 
 if __name__=='__main__':unittest.main()

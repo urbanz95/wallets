@@ -32,7 +32,7 @@ O endpoint global pode incluir tokens antigos **negociados agora**. Só as orige
 | Duas análises profundas | 270 CU | 200 créditos |
 | Total | 800 CU | 200 créditos |
 
-Estes valores são tetos, não cobranças fixas: as reservas seguintes são proporcionais ao número de candidatas que efetivamente avança. As duas análises previstas requerem até 72 CU Birdeye (seis páginas de 12 CU) e 200 créditos Helius; os 270 CU são o teto configurável, não uma reserva obrigatória. Retentativas partilham o mesmo orçamento e podem deixar menos consultas concluídas.
+Estes valores são tetos, não cobranças fixas: as reservas seguintes são proporcionais ao número de candidatas que efetivamente avança. As duas análises previstas requerem até 72 CU Birdeye (seis páginas de 12 CU) e 200 créditos Helius; os 270 CU são o teto configurável, não uma reserva obrigatória. Este perfil faz uma tentativa HTTP por consulta (`max_retries=0`), para um timeout não consumir as vagas das restantes candidatas. A execução seguinte pode voltar a tentar; o estado incremental é conservado. Outros perfis mantêm as retentativas próprias.
 
 A reserva central é publicada duravelmente **antes** de conceder acesso à rede a cada estágio. Só créditos nunca tentados são devolvidos no fecho controlado. Timeouts e crashes não são reembolsados por presunção. O ledger partilhado usa o cofre principal, com o formato original compatível com a main; o ranking usa outro cofre. A mesma exclusão mútua `wallets-durable-state` impede execuções concorrentes no repositório. Consumo de outras aplicações da conta não é conhecido por este ledger.
 
@@ -47,3 +47,5 @@ O Excel contém endereço, ranking, score, âmbito, PnL WAC 7d/30d em USD separa
 O resultado SOL conhecido é um **subtotal**; tokens UNKNOWN não são zero. Inventário global, cobertura global, conversão USD, custos não identificados, saída executável, coordenação/MEV, identidade humana, etiquetas completas e persistência independente continuam NÃO VERIFICADOS. Nível A não significa aprovação integral nem reproduzibilidade garantida.
 
 Ver [critérios](criteria.md) e [contratos oficiais e capacidades](capabilities.md). Testes usam fixtures e mocks; a validação autenticada e as suas contagens são registadas separadamente após a execução, sem publicar identidades.
+
+A primeira validação real expôs uma diferença de contrato: `tokens[]` inclui ativos de liquidação SOL/stablecoins, enquanto `summary.unique_tokens` os exclui. São agora separados antes de comparar contagens e calcular métricas. Se outra divergência persistir, o headline permanece um proxy e PF/concentração da lista ficam NÃO VERIFICADOS; isso não inventa uma lista completa. O histograma conta ocorrências de motivos em toda a amostra consultada, não carteiras únicas; uma carteira pode ter vários motivos.
