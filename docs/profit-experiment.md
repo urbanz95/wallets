@@ -1,0 +1,49 @@
+# Experiência de ranking privado por lucro
+
+Branch `feat/profit-evidence-funnel`, criado de `077096d`. Não foi feito merge nem alterado o workflow da `main`. O objetivo é obter até três candidatas ordenadas com prova e lacunas visíveis. Encontrar candidatas B/C não demonstra que sejam lucrativas ou acompanháveis; não se promete obter três carteiras aprovadas.
+
+## Executar sem programar
+
+1. No GitHub, abrir **Actions → Análise diária Birdeye e Helius gratuitas → Run workflow** (o nome da lista pode continuar o da main).
+2. Escolher o branch **feat/profit-evidence-funnel** e executar. Nesse branch o ficheiro `daily.yml` chama exclusivamente `profit.yml`, manual e sem Telegram.
+3. Consultar `profit-summary-…`: contém apenas contagens, consumo e histograma. Não contém endereços de carteiras nem de tokens.
+4. O Excel **ranking_carteiras.xlsx** é privado: é gerado no runner, mas não é publicado como artefacto. O ranking e os dados necessários para regenerá-lo ficam no cofre cifrado `wallets-state-profit-ranking`. A chave existente permite recuperar o Excel num ambiente privado. Não colar a chave, o estado decifrado ou o Excel em issues ou commits.
+
+São usados os três secrets já configurados: `BIRDEYE_API_KEY`, `HELIUS_API_KEY` e `STATE_ENCRYPTION_KEY`. Este workflow não recebe secrets Telegram. Não há cron adicional: a experiência é manual para evitar somar automaticamente 800 CU diárias ao consumo da main.
+
+## Diagnóstico confirmado e correções
+
+1. A descoberta antiga ordenava por volume e descartava evidência de resultados. A nova usa `/trader/gainers-losers` em `1W`, `sort_by=PnL`, como origem principal. Complementa com até cinco tokens listados na Birdeye nos últimos sete dias e `/defi/v2/tokens/top_traders`, `sort_by=realized_pnl`. São preservados PnL, cashflow disponível, contagens, datas e etiquetas. O filtro de valorização mínima de 10% deixa de ser obrigatório. Etiquetas explícitas sniper/bundler/insider excluem desta população experimental; não constituem prova de fraude.
+2. O funil antigo era estreito. Agora enumera até 100 traders globais e 50 ocorrências nos cinco tokens, deduplica e consulta sete pré-filtros 7d. As três melhores recebem também 30d; só duas avançam para a análise profunda. Repetição em tokens de origem tem prioridade; depois contam PF/concentração conhecidos, diversidade limitada a 40 tokens e, por fim, montante de PnL. Estes pesos são heurísticos fixos, anteriores à nova execução.
+3. Compradores iniciais tinham prioridade. Foram retirados deste perfil: comprar cedo não prova ser sniper, mas não é a população pretendida para acompanhamento.
+4. O pré-filtro recusa mais de 100 trades/dia em média antes de gastar créditos Helius. Uma análise profunda consulta no máximo uma página de 1000 transações por carteira; atingir o limite deixa o histórico parcial, não aprovado por omissão.
+5. A Helius não fornece USD. O novo FIFO usa apenas SOL/wSOL atribuído à mesma transação, com taxa de rede e rendas reconciliadas. Swaps Pump reconhecidos são suportados; outros swaps simples podem ser corroborados pelas duas pernas Birdeye, com hash, carteira, data, índice, quantidades e fluxo SOL coincidentes. Transferências adicionais, stablecoins como contrapartida, várias rotas e ambiguidades não são convertidas em custos inventados. O valor USD não converte retroativamente o histórico.
+6. A exclusão de abertos criava seleção de um subconjunto. Agora cada token de custo conhecido contribui com realizado menos o custo restante, incluindo perdedores abertos; marcas, quando existirem, são um cenário separado. A persistência SQLite já existia: a lacuna era prova de desempenho em períodos mais longos, não ausência de armazenamento. Os headlines WAC positivos em 7d/30d são proxies sobrepostos, não persistência independente.
+
+O endpoint global pode incluir tokens antigos **negociados agora**. Só as origens complementares comprovam listagem Birdeye até sete dias; listagem não demonstra data de criação do mint. O universo e as origens ficam guardados no estado privado. Não se introduziu uma lista fixa de carteiras nem DexScreener.
+
+## Orçamento e armazenamento
+
+| Estágio | Reserva Birdeye máxima | Reserva Helius máxima |
+|---|---:|---:|
+| Descoberta: ranking + lista + cinco tokens | 230 CU | 0 |
+| Sete pré-filtros 7d | 210 CU | 0 |
+| Três consultas 30d | 90 CU | 0 |
+| Duas análises profundas | 270 CU | 200 créditos |
+| Total | 800 CU | 200 créditos |
+
+Estes valores são tetos, não cobranças fixas: as reservas seguintes são proporcionais ao número de candidatas que efetivamente avança. As duas análises previstas requerem até 72 CU Birdeye (seis páginas de 12 CU) e 200 créditos Helius; os 270 CU são o teto configurável, não uma reserva obrigatória. Retentativas partilham o mesmo orçamento e podem deixar menos consultas concluídas.
+
+A reserva central é publicada duravelmente **antes** de conceder acesso à rede a cada estágio. Só créditos nunca tentados são devolvidos no fecho controlado. Timeouts e crashes não são reembolsados por presunção. O ledger partilhado usa o cofre principal, com o formato original compatível com a main; o ranking usa outro cofre. A mesma exclusão mútua `wallets-durable-state` impede execuções concorrentes no repositório. Consumo de outras aplicações da conta não é conhecido por este ledger.
+
+Há pré-verificação de disco e tamanho antes de cada reserva, limite experimental de 128 MiB e normalização seguida de poda atómica dos payloads RPC. Os receipts preservam prova mínima, assinatura, hash, saldos, custos, razões e manifestos; a sua integridade é verificada ao recuperar. Não se apagam payloads cuja normalização não ficou persistida. A experiência começa vazia, sem copiar centenas de MiB de payloads antigos. Dados antigos de outros cofres não são apagados.
+
+Snapshots do ranking são imutáveis e guardam configuração, datas e dados disponíveis. Não há simulação de acompanhamento, informação futura ou preço de execução atribuído a um seguidor. Datas internas UTC e apresentação Europe/Lisbon. Cópias cifradas de recuperação em artefactos têm retenção de 90 dias; o cofre em Releases é a fonte durável, não a cache nem o disco temporário.
+
+## Interpretar a saída
+
+O Excel contém endereço, ranking, score, âmbito, PnL WAC 7d/30d em USD separado das métricas FIFO SOL, custo aberto, concentração, motivos e NÃO VERIFICADO. A pontuação organiza evidência; não é probabilidade de lucro. A exige todos os critérios verificáveis do perfil; B indica análise profunda parcial/insuficiente; C apenas pré-filtro. Falhas financeiras conhecidas ficam assinaladas e ordenadas depois de candidatas sem essas falhas. Uma amostra insuficiente nunca recebe A.
+
+O resultado SOL conhecido é um **subtotal**; tokens UNKNOWN não são zero. Inventário global, cobertura global, conversão USD, custos não identificados, saída executável, coordenação/MEV, identidade humana, etiquetas completas e persistência independente continuam NÃO VERIFICADOS. Nível A não significa aprovação integral nem reproduzibilidade garantida.
+
+Ver [critérios](criteria.md) e [contratos oficiais e capacidades](capabilities.md). Testes usam fixtures e mocks; a validação autenticada e as suas contagens são registadas separadamente após a execução, sem publicar identidades.

@@ -1,0 +1,117 @@
+# Perfil experimental de ranking por lucro. O funil usa exclusivamente [profit]
+# para seleção e [api]/[helius] para rede; os restantes campos mantêm compatibilidade
+# com o leitor comum de configuração, não aprovam o ranking nem Telegram.
+criteria_version = "2026-10-30.profit.1"
+lookback_days = 7
+max_data_age_hours = 24
+max_evaluation_age_hours = 24
+min_tokens = 20
+min_activity_days = 14
+min_weeks = 4
+min_profitable_week_fraction = 0.6
+min_win_rate = 0.4
+min_profit_factor = 1.3
+min_median_return = 0.0
+max_top1_share = 0.35
+max_top3_share = 0.65
+max_unknown_cost_fraction = 0.0
+max_open_loss_fraction = 0.2
+max_rapid_close_fraction = 0.2
+rapid_seconds = 60
+max_trades_per_day = 100
+min_bot_signals = 2
+min_followable_hold_seconds = 300
+notification_cooldown_days = 30
+max_notifications_per_run = 5
+
+# A seleção observada é avaliação local/relatórios; o Telegram mantém os gates estritos.
+[selection]
+mode = "observed"
+min_closed_token_fraction = 0.8
+notifications = "strict"
+
+[api]
+collect_optional = false
+max_requests_per_run = 60
+max_credits_per_run = 800
+monthly_credit_ceiling = 28000
+requests_per_second = 1.0
+max_retries = 2
+cache_ttl_seconds = 900
+max_pages = 5
+max_transaction_details_per_wallet = 2
+
+[discovery]
+time_frame = "7d"
+platform_name = "pump.fun"
+min_age_days = 0
+max_age_days = 7
+min_liquidity = 100000
+min_volume_24h_usd = 100000
+min_price_change_24h_percent = 10
+max_tokens = 3
+max_wallets = 3
+
+# Complemento on-chain autorizado. Não altera os oito requisitos obrigatórios.
+[helius]
+enabled = true
+max_requests_per_run = 8
+max_credits_per_run = 300
+monthly_credit_ceiling = 900000
+requests_per_second = 5.0
+max_retries = 2
+cache_ttl_seconds = 900
+max_pages = 1
+page_size = 1000
+max_discovery_tokens = 3
+max_early_buyers = 20
+max_launch_addresses = 3
+
+# Opcional: endereços públicos de curva/pools conhecidos, por token.
+# [helius.launch_addresses]
+# ENDERECO_DO_TOKEN = ["ENDERECO_DA_CURVA_OU_POOL"]
+
+# Experiência de desempenho recente; não autoriza Telegram observado.
+[recent]
+enabled = true
+window_days = 7
+require_activity_hours = 24
+min_activity_days = 4
+min_profitable_days = 3
+discovery_credit_budget = 160
+discovery_request_budget = 5
+
+# Ranking de investigação; não é aprovação Telegram.
+[profit]
+enabled = true
+version = "2026-10-30.profit.1"
+discovery_budget = 230
+prefilter_budget = 210
+persistence_budget = 90
+deep_budget = 270
+helius_deep_budget = 200
+max_prefilters = 7
+max_persistence = 3
+max_deep = 2
+discovery_gainers_limit = 100
+discovery_max_tokens = 5
+discovery_sort_by = "realized_pnl"
+discovery_min_liquidity = 100000
+discovery_min_volume_24h_usd = 100000
+discovery_max_token_age_days = 7
+# Ausência de discovery_min_price_change_24h_percent torna-o opcional.
+prefilter_max_pages = 1
+prefilter_min_tokens = 1
+deep_birdeye_pages = 3
+max_trades_per_day = 100
+min_tokens = 40
+min_win_rate = 0.4
+min_profit_factor = 1.3
+max_top1_share = 0.35
+max_top3_share = 0.65
+max_unknown_cost_fraction = 0.2
+min_followable_hold_seconds = 300
+max_rapid_close_fraction = 0.2
+max_data_age_hours = 24
+max_state_bytes = 134217728
+minimum_free_disk_bytes = 536870912

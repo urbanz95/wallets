@@ -144,3 +144,54 @@ A versão de critérios `2026-10-29.3` separa a paginação concluída do feed (
 Tokens abertos ou desconhecidos ficam enumerados e fora do resultado bruto dos ciclos fechados. A seleção exige pelo menos80% dos tokens observados incluídos; essa fração mede número de tokens, não valor financeiro nem cobertura do património. Inventário global, taxas totais USD, posições abertas globais, liquidez, execução, coordenação/MEV e etiquetas continuam expressamente NÃO VERIFICADOS.
 
 Esta seleção tem pré-visualização local e não autoriza Telegram. O envio continua a exigir as oito verificações estritas originais; `selection.notifications="strict"` é a única configuração aceite. Alterar essa política depende de autorização expressa e implementação posterior. A [entrega](delivery.md) regista a reavaliação offline e distingue-a de novas consultas autenticadas ou de aprovação real.
+
+
+## Funil experimental por lucro — contratos revistos em 30-10-2026
+
+Esta secção descreve o branch experimental iniciado em `077096d`. Acrescenta descoberta e pré-filtro por métricas do fornecedor; não altera a política estrita do Telegram. A confirmação abaixo é **documental**, cruzando os esquemas individuais com a [matriz Standard](https://data.birdeye.so/docs/guides/data-accessibility-by-packages), a [tabela de CU](https://data.birdeye.so/docs/guides/what-is-compute-unit-cost) e os [limites oficiais](https://data.birdeye.so/docs/guides/api-access/rate-limiting). Os testes destes novos módulos usam fixtures e não confirmam acesso autenticado com a chave da conta. Uma execução real deve ficar identificada separadamente no relatório de entrega.
+
+| Etapa | Endpoint Standard e custo | Pedido implementado | Cobertura e limitação |
+|---|---|---|---|
+| Descoberta principal | `GET /trader/gainers-losers`, **30 CU** | `type=1W`, `sort_by=PnL`, `max_trade=700`, `offset=0`, `limit=100` | Classificação agregada de carteiras em Solana; não demonstra idade dos tokens, ciclos fechados, execução acompanhável ou ausência de bots. |
+| Complemento por tokens recentes | `GET /defi/v3/token/list`, **50 CU** | Uma página de 100; listagem entre o corte e os sete dias anteriores, liquidez e volume 24h mínimos configuráveis; valorização 24h opcional | Seleciona até cinco tokens para obter traders. O momento de listagem não prova a criação do token e a lista não é exaustiva. |
+| Traders por resultado realizado do token | `GET /defi/v2/tokens/top_traders`, **30 CU** por token | `time_frame=7d`, `sort_by=realized_pnl`, `sort_type=desc`, `offset=0`, `limit=10` | A origem é registada por token; encontrar lucro num token não demonstra lucro da carteira inteira. |
+| Pré-filtro 7d e persistência 30d | `POST /wallet/v2/pnl/details`, **30 CU** por página | `duration=7d` ou `30d`, `pnl_method=wac`, `position_scope=duration_only`, `sort_by=last_trade`, `sort_type=desc`, `offset`, `limit=100` | Apenas ordenação e pré-filtro. A avaliação independente usa contabilidade própria; USD do fornecedor não passa a FIFO em SOL. |
+
+### Classificação global de carteiras por PnL
+
+[Contrato oficial de Gainers/Losers](https://data.birdeye.so/docs/data-api/wallet-networth-pnl/get-trader-gainers-losers).
+
+- `type` aceita `yesterday`, `today`, **`1W`**, `30d` e `90d`. `sort_by` aceita **`PnL`**, `realized_pnl`, `unrealized_pnl` e `trader_score`. A capitalização de `PnL` é obrigatória; este esquema não documenta `sort_type`.
+- Paginação: `limit` de 1 a 100 e `offset + limit <= 10000`. O perfil experimental usa só a primeira página de 100, sem afirmar que encontrou todas as carteiras lucrativas.
+- Filtros documentados incluem `min_trade`, `max_trade`, mínimos/máximos de volume USD, PnL realizado, não realizado e total. O contrato associa a ordenação `PnL` a um mínimo implícito de 1000 USD; o pedido omite `min_pnl`, em vez de inventar `min_pnl=0`. Isto introduz um viés adicional para carteiras de maior dimensão.
+- Os campos documentados por linha são `network`, `address`, `pnl`, `realized_pnl`, `unrealized_pnl`, `volume` e `trade_count`. `pnl` agrega realizado e não realizado em USD, não representa lucro líquido recalculado. Campos ausentes ficam desconhecidos.
+- Não há etiquetas, lista completa de tokens nem tempos por operação garantidos neste resultado. `trade_count / 7 <= 100` é apenas um filtro de intensidade média: não prova atividade uniforme, inexistência de rajadas nem estratégia humana.
+- Uma carteira descoberta nesta classificação pode ter negociado tokens antigos. O requisito de atividade é a janela recente; a origem em tokens listados há até sete dias só fica demonstrada para candidatas com evidência adicional de `top_traders` desses tokens.
+
+### Campos de top traders usados pelo novo funil
+
+[Contrato oficial de Top Traders](https://data.birdeye.so/docs/data-api/wallet-networth-pnl/get-defi-v2-tokens-top-traders).
+
+- `sort_by` aceita exatamente `volume`, `trade`, `total_pnl`, `unrealized_pnl`, **`realized_pnl`**, `volume_usd` e `hold_volume`. A experiência escolhe resultado realizado, em vez de volume. `time_frame` aceita `30m`, `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `24h`, `2d`, `3d`, `7d`, `14d`, `30d`, `60d`, `90d` e `all_time`.
+- Além de `owner` e `tags`, guardam-se os campos normalizados disponíveis: `volume`, `trade`, `tradeBuy`, `tradeSell`, `volumeBuy`, `volumeSell`, `volumeBuyUSD`, `volumeSellUSD`, `volumeUsd`, `totalPnl`, `realizedPnl`, `unrealizedPnl`, `holdVolume`, `holdVolumeUsd`, `holdAvgPrice`, `avgBuyPrice`, `avgSellPrice`, `firstTradeUnixTime` e `lastTradeUnixTime`. Os nomes de resposta são camelCase; os nomes de ordenação usam underscores.
+- `wallet_tags` é um filtro de **inclusão**. Não existe aqui uma sintaxe documentada para excluir etiquetas pelo pedido. A experiência exclui localmente etiquetas observadas `sniper`, `bundler` e `insider`, segundo a regra explícita deste perfil. Etiquetas ausentes ou um array vazio não provam que a carteira seja humana ou acompanhável.
+- A ordenação dá prioridade a carteiras observadas em dois ou mais tokens distintos. Não soma PnL de origens duplicadas nem transforma várias operações no mesmo token em amostras independentes. Os compradores iniciais Helius não entram neste funil.
+
+### Paginação e significado do pré-filtro WAC
+
+[Contrato oficial de PnL Details](https://data.birdeye.so/docs/data-api/wallet-networth-pnl/post-wallet-v2-pnl-details).
+
+- O esquema documenta `sort_by=last_trade`; um exemplo textual que usa `value` não justifica enviar esse valor. `duration` aceita `all`, `90d`, `30d`, `7d` e `24h`; a experiência usa 7d e 30d. O limite é de 100 tokens por página; `offset` pode ir até 10000.
+- `data.summary.unique_tokens` e os totais de `data.summary` referem-se a **todos os tokens do âmbito pedido**, independentemente da página devolvida. O cabeçalho pode por isso sustentar um pré-filtro provisório mesmo quando a primeira página não cobre todos os tokens. Esse passe não é aprovação, nem prova de contabilidade independente.
+- Em `data.tokens`, os grupos normalizados são `counts` (`total_buy`, `total_sell`, `total_trade`, `total_win`, `total_loss`, `win_rate`), `quantity` (`total_bought_amount`, `total_sold_amount`, `holding`), `cashflow_usd` (`cost_of_quantity_sold`, `total_invested`, `total_sold`, `current_value`), `pnl` (`realized_profit_usd`, `realized_profit_percent`, `unrealized_usd`, `unrealized_percent`, `total_usd`, `total_percent`, `avg_profit_per_trade_usd`) e `pricing` (`current_price`, `avg_buy_cost`, `avg_sell_cost`). Só os campos necessários são conservados pelo pré-filtro; não se guardam payloads completos.
+- A taxa de sucesso, o profit factor e a concentração por token só são calculados quando a paginação está completa e todos os resultados por token são conhecidos. Com uma página parcial ficam desconhecidos. Alteração dos totais entre páginas, linhas duplicadas ou respostas incoerentes impedem declarar completude.
+- Os indicadores deste pré-filtro usam `pnl.total_usd` por token, incluindo posições marcadas pelo fornecedor. Não são os indicadores finais em SOL com abertos no pior caso. A taxa de sucesso é recalculada por token; o campo `counts.win_rate` do fornecedor permanece separado. A concentração divide os maiores resultados pela soma dos resultados **positivos**, nunca pelo resultado líquido total. Sem perdas observadas, o profit factor não é apresentado como infinito.
+- `data.meta.time` identifica a fotografia do fornecedor; não oferece uma consulta histórica arbitrária. Os agregados móveis 7d e 30d sobrepõem-se, não são períodos independentes, não provam estabilidade fora da amostra e não devem ser apresentados como acompanhamento posterior real.
+
+### Limites operacionais e estado de validação
+
+O plano Standard permanece em 30000 CU/mês, um pedido por segundo por conta e sem compras adicionais. A página de rate limits refere também limites de grupos wallet (5 pedidos/s e 75/min); prevalece o limite da conta mais restritivo, sem ultrapassar 60 pedidos/min. Uma frase genérica antiga da página de limites restringe Standard a três endpoints, mas as páginas individuais acima e a matriz específica assinalam estes contratos como Standard: esta divergência fica registada e exige uma consulta real controlada antes de afirmar acesso da conta. Não foram encontrados avisos de depreciação nestes três contratos à data da revisão; ausência de aviso não garante disponibilidade futura ou retenção integral.
+
+O teto documental do estágio de descoberta é **230 CU**: 30 da classificação global, 50 da lista de tokens e 5 × 30 dos traders. O perfil pode reservar 210 CU para sete pré-filtros 7d, 90 CU para três consultas 30d e 270 CU para a análise profunda, totalizando 800 CU. Estes são limites de planeamento, não consumos reais: o relatório de execução tem de distinguir reservas, pedidos efetivos, cache e consumo por estágio. Uma falha, restrição ou quota esgotada deixa as limitações explícitas e nunca autoriza consultar um endpoint pago ou outro fornecedor.
+
+Os testes novos verificam contratos, ordenação, etiquetas, amostras por token, paginação, respostas parciais, orçamentos interrompidos e pré-filtro sem rede. **Não são uma validação autenticada destas novas consultas**, nem evidência de que qualquer carteira real seja rentável ou acompanhável. Identificadores de carteira e evidências individualizadas ficam apenas no estado cifrado e no Excel privado; este documento contém só contratos e limitações.

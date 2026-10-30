@@ -1,3 +1,5 @@
+> **Branch experimental de ranking por lucro:** ver [utilização e limites](docs/profit-experiment.md). Execução manual, sem Telegram; identidades apenas no estado cifrado e no Excel privado. A `main` não foi alterada.
+
 # Carteiras Solana — Birdeye Standard e Helius Free
 
 > **Branch experimental `feat/recent-7d`:** usa [config.recent-7d.toml](config.recent-7d.toml) para descobrir tokens com até7 dias de listagem e avaliar operações dos últimos7 dias. O [guia da experiência](docs/recent-7d.md) explica o teste real, o estado isolado e os limites. Esta branch não envia Telegram; a rotina da `main` conserva o seu comportamento.

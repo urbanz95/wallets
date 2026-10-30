@@ -18,6 +18,7 @@ from .api_diagnostics import extract_private_diagnostic
 ENDPOINTS = {
     ('GET', '/defi/v3/token/list'): 50,
     ('GET', '/defi/v2/tokens/top_traders'): 30,
+    ('GET', '/trader/gainers-losers'): 30,
     ('GET', '/trader/txs/seek_by_time'): 12,
     ('POST', '/wallet/v2/pnl/details'): 30,
     ('POST', '/wallet/v2/transfer'): 10,
@@ -33,6 +34,9 @@ VALIDATION_FIELDS = frozenset({
     'platform_name', 'min_liquidity', 'min_volume_24h_usd',
     'min_price_change_24h_percent', 'min_recent_listing_time',
     'max_recent_listing_time', 'time_frame', 'signature',
+    'type', 'min_trade', 'max_trade', 'min_volume_usd', 'max_volume_usd',
+    'min_realized_pnl', 'max_realized_pnl', 'min_unrealized_pnl',
+    'max_unrealized_pnl', 'min_pnl', 'max_pnl',
 })
 VALIDATION_BOUND_FIELDS = frozenset({
     'ge', 'gt', 'le', 'lt', 'minimum', 'maximum', 'min_length', 'max_length',
