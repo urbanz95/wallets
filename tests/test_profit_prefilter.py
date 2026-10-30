@@ -5,7 +5,7 @@ from decimal import Decimal
 import unittest
 from unittest.mock import patch
 
-from wallets.birdeye import BudgetExceeded
+from wallets.birdeye import BudgetExceeded, AccessDenied
 from wallets.profit_prefilter import prefilter_wallet
 from wallets.models import iso
 
@@ -162,6 +162,13 @@ class ProfitPrefilterTests(unittest.TestCase):
         value=response([token(0,10)]);value['data']['meta']['address']='B'*44
         r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
         self.assertFalse(r['passed']);self.assertIn('pnl_wallet_mismatch',r['reasons'])
+
+    def test_restriction_status_is_preserved_without_response_body(self):
+        client=Client(AccessDenied('Cliente interrompido.'))
+        client.last_http_status=429
+        result=prefilter_wallet(client,WALLET,7,{},NOW)
+        self.assertEqual(result['raw_metrics']['failure_http_status'],429)
+        self.assertFalse(result['passed'])
 
 
 if __name__=='__main__':unittest.main()

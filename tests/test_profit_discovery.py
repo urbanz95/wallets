@@ -131,7 +131,7 @@ class ProfitDiscoveryTests(unittest.TestCase):
         client=Client(tokens=[market(T1),market(T2)],traders={T1:[top(B)],T2:BudgetExceeded('limite')})
         r=discover(client,self.store,{},NOW)
         self.assertEqual({row['wallet'] for row in r['candidates']},{A,B})
-        self.assertEqual(r['errors'],[{'stage':'discovery_token_traders','reason':'BudgetExceeded'}])
+        self.assertEqual(r['errors'],[{'stage':'discovery_token_traders','reason':'BudgetExceeded','http_status':None}])
 
     def test_global_network_and_metrics_are_validated_locally(self):
         bad=gainer(B);bad['network']='ethereum'
