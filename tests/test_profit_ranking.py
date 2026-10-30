@@ -16,8 +16,10 @@ CONFIG={'profit':{'min_tokens':40,'min_profit_factor':1.3,'min_win_rate':.4,
 
 def candidate(wallet='A'*44):
     return {'wallet':wallet,'origins':['token-one','token-two'],
-            'prefilter7':{'pnl_usd':Decimal('1000'),'complete':True,'passed':True},
-            'prefilter30':{'pnl_usd':Decimal('2000'),'complete':True,'passed':True},
+            'prefilter7':{'pnl_usd':Decimal('1000'),'complete':True,'passed':True,
+                          'raw_metrics':{'snapshot_at':NOW,'fetched_at':NOW}},
+            'prefilter30':{'pnl_usd':Decimal('2000'),'complete':True,'passed':True,
+                           'raw_metrics':{'snapshot_at':NOW,'fetched_at':NOW}},
             'deep':{'complete':True,'period_start':NOW-timedelta(days=7),
                     'period_end':NOW,'fetched_at':NOW,'coverage':{'invalid_count':0},
                     'metrics':{'currency':'SOL','known_tokens_count':40,'tokens_count':42,'fees_complete':True,
@@ -200,3 +202,46 @@ class ProfitRankingTests(unittest.TestCase):
             result=rank_candidates([item],CONFIG,NOW)[0]
             self.assertNotEqual(result['tier'],'A')
             self.assertIn('recent_activity',result['reason_codes'])
+
+    def test_provider_snapshot_and_actual_receipt_dates_are_mandatory_for_a(self):
+        changes=(
+            ({},'INDETERMINADA'),
+            ({'snapshot_at':NOW},'INDETERMINADA'),
+            ({'snapshot_at':'invalid','fetched_at':NOW},'INDETERMINADA'),
+            ({'snapshot_at':True,'fetched_at':NOW},'INDETERMINADA'),
+            ({'snapshot_at':NOW+timedelta(seconds=1),'fetched_at':NOW},'REPROVADA'),
+            ({'snapshot_at':NOW,'fetched_at':NOW+timedelta(seconds=1)},'REPROVADA'),
+            ({'snapshot_at':NOW-timedelta(hours=24,seconds=1),'fetched_at':NOW},'REPROVADA'),
+            ({'snapshot_at':NOW-timedelta(hours=25),'fetched_at':NOW-timedelta(hours=25)},'REPROVADA'),
+        )
+        for duration in ('prefilter7','prefilter30'):
+            for raw,status in changes:
+                item=candidate();item[duration]['raw_metrics']=raw
+                with self.subTest(duration=duration,raw=raw):
+                    row=rank_candidates([item],CONFIG,NOW)[0]
+                    self.assertNotEqual(row['tier'],'A')
+                    self.assertFalse(row['assessment_passed'])
+                    check=next(x for x in row['ranking_checks'] if x['name']=='provider_dates')
+                    self.assertEqual(check['status'],status)
+                    self.assertIn('provider_dates',{x['name'] for x in row['unverified']})
+
+    def test_every_provider_page_is_checked_not_only_the_last_snapshot(self):
+        item=candidate()
+        raw=item['prefilter7']['raw_metrics']
+        raw['responses']=[{'snapshot_at':NOW+timedelta(seconds=1),'fetched_at':NOW},
+                          {'snapshot_at':NOW,'fetched_at':NOW}]
+        row=rank_candidates([item],CONFIG,NOW)[0]
+        self.assertNotEqual(row['tier'],'A')
+        self.assertIn('provider_dates',row['reason_codes'])
+        # O resumo também tem de ser coerente; páginas válidas não o substituem.
+        raw['responses']=[{'snapshot_at':NOW,'fetched_at':NOW}]
+        raw['snapshot_at']=NOW+timedelta(seconds=1)
+        self.assertNotEqual(rank_candidates([item],CONFIG,NOW)[0]['tier'],'A')
+
+    def test_exact_24_hour_provider_boundary_and_explicit_future_flag(self):
+        item=candidate()
+        for duration in ('prefilter7','prefilter30'):
+            item[duration]['raw_metrics']={'snapshot_at':NOW-timedelta(hours=24),'fetched_at':NOW}
+        self.assertEqual(rank_candidates([item],CONFIG,NOW)[0]['tier'],'A')
+        item['prefilter7']['_future_snapshot']=True
+        self.assertNotEqual(rank_candidates([item],CONFIG,NOW)[0]['tier'],'A')

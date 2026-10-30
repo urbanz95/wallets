@@ -106,3 +106,12 @@ class PrivateApiDiagnosticTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RestrictionDiagnosticTests(unittest.TestCase):
+    def test_text_and_error_string_restrictions_redact_authentication(self):
+        from wallets.api_diagnostics import extract_restriction_diagnostic
+        for raw in (b'Too many requests',b'{"error":"Too many requests"}',b'{"detail":"Too many requests"}'):
+            self.assertEqual(extract_restriction_diagnostic(raw,'fixture-secret')['message'],'Too many requests')
+        value=extract_restriction_diagnostic(b'Quota fixture-secret https://secret.example/forbidden','fixture-secret')
+        self.assertNotIn('fixture-secret',str(value));self.assertNotIn('secret.example',str(value))

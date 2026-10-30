@@ -81,3 +81,24 @@ def extract_private_diagnostic(raw: bytes, api_key: str) -> dict:
         return result
     except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
+
+
+def extract_restriction_diagnostic(raw: bytes, api_key: str) -> dict:
+    """Mensagens de429/401/403 em JSON alternativo ou texto; só cofre privado."""
+    if not isinstance(raw,bytes) or len(raw)>MAX_BODY_BYTES or not api_key:
+        return {}
+    direct=extract_private_diagnostic(raw,api_key)
+    if direct:return direct
+    try:
+        text=raw.decode('utf-8')
+        try:body=json.loads(text)
+        except ValueError:body=text
+        if isinstance(body,dict):
+            message=body.get('error',body.get('detail'))
+            if isinstance(message,dict):message=message.get('message')
+        else:message=body
+        if not isinstance(message,str):return {}
+        value=_redact(message,_secret_variants(api_key))[:MAX_MESSAGE_CHARS]
+        return {'message':value} if value.strip() else {}
+    except (UnicodeError,TypeError,ValueError,RecursionError,OverflowError):
+        return {}

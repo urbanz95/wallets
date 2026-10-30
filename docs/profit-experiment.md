@@ -67,3 +67,7 @@ Se a fonte de tokens indicar HTTP429, a opção manual **probe_wallet_access** f
 Os contadores distinguem `pnl_details` (carteiras cujo pré-filtro foi invocado), `pnl_responses` (respostas recebidas, incluindo cache), `prefilter_passed` (pré-filtro provisório favorável) e pedidos HTTP efetivos no orçamento. Uma interrupção local não é contada como resposta recebida.
 
 A sondagem real de30CU confirmou HTTP200 na Wallet API após HTTP429 na lista de tokens. Por isso o perfil experimental separa os circuitos de descoberta, Wallet API e histórico trader. Uma família que recebe429 interrompe os seus pedidos; outra família Standard confirmada pode tentar um pedido, com a mesma chave e os limites globais de CU/pedidos partilhados. Se a Wallet API receber429, não se tenta outra carteira para repetir o pedido. HTTP401/402/403 propaga a interrupção a todas as famílias. Não há novos fornecedores, troca de chaves ou repetição do endpoint bloqueado.
+
+Os circuitos partilham também o último instante de pedido (1 pedido/s por conta) e `Retry-After`. O prazo é guardado no estado privado; esperas superiores a60s adiam a consulta antes de reservar créditos, em vez de reduzir o prazo ou insistir. Na ausência de `Retry-After`, um429 impõe60s antes de outra família tentar acesso.
+
+A revisão `2026-10-30.profit.3` pode aprofundar7d quando a consulta30d falha tecnicamente, apenas para obter evidência B. PnL30d positivo continua obrigatório para A; dados30d desconhecidos não são presumidos positivos. Falhas conhecidas do pré-filtro continuam a excluir dessa passagem.

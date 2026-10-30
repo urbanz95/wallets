@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from test_sol_accounting import END, WALLET, pair
 from wallets.storage import Store
-from wallets.profit_pipeline import run_pipeline, _provider_order, _family_client
+from wallets.profit_pipeline import run_pipeline, _provider_order, _family_client, _deep_allowed
 from wallets.profit_persistence import latest_run
 
 
@@ -78,13 +78,16 @@ class ProfitPipelineTests(unittest.TestCase):
     def test_family_circuits_propagate_auth_but_preserve_global_budgets_after_429(self):
         from types import SimpleNamespace
         api={'max_requests_per_run':60,'max_credits_per_run':800}
-        blocked=SimpleNamespace(_halted=True,last_http_status=429,requests=2,credits=80)
+        blocked=SimpleNamespace(_halted=True,last_http_status=429,requests=2,credits=80,
+                                _last_call=END,not_before=END+timedelta(seconds=120))
         with patch('wallets.profit_pipeline.BirdeyeClient') as factory:
             _family_client(object(),api,[blocked])
             settings=factory.call_args.args[2]
             self.assertEqual(settings['max_requests_per_run'],58)
             self.assertEqual(settings['max_credits_per_run'],720)
             factory.assert_called_once()
+            self.assertEqual(factory.return_value._last_call,END)
+            self.assertEqual(factory.return_value.not_before,END+timedelta(seconds=120))
         for status in (401,402,403):
             blocked.last_http_status=status
             with patch('wallets.profit_pipeline.BirdeyeClient') as factory:
@@ -107,3 +110,15 @@ class ProfitPipelineTests(unittest.TestCase):
             self.assertEqual(len(calls),1)
             self.assertFalse(a['passed']);self.assertFalse(b['passed'])
             self.assertEqual(a['raw_metrics']['failure_http_status'],429)
+
+    def test_current_provider_profile_cannot_be_used_as_a_backtest(self):
+        with patch('wallets.profit_pipeline.utcnow',return_value=END),self.assertRaises(ValueError):
+            run_pipeline(None,{'profit':{}},None,None,None,now=END-timedelta(hours=1))
+
+    def test_missing_30d_can_produce_partial_deep_evidence_but_known_failures_cannot(self):
+        self.assertTrue(_deep_allowed({'passed':True,'pnl_usd':1}))
+        self.assertTrue(_deep_allowed({'passed':False,'pnl_usd':None,'reasons':['pnl_unavailable:AccessDenied']}))
+        self.assertFalse(_deep_allowed(None))
+        self.assertFalse(_deep_allowed({'passed':False,'pnl_usd':-1,'reasons':['provider_pnl_not_positive']}))
+        self.assertFalse(_deep_allowed({'passed':False,'pnl_usd':None,'reasons':['provider_future_snapshot']}))
+        self.assertFalse(_deep_allowed({'passed':False,'pnl_usd':None,'reasons':['activity_over_daily_limit']}))

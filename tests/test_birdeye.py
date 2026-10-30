@@ -57,14 +57,39 @@ class ClientTests(unittest.TestCase):
         def transport(request):
             calls.append(request)
             if len(calls) == 1:
-                raise HTTPError(request.full_url, 429, 'quota', {'Retry-After': '999'}, None)
+                raise HTTPError(request.full_url, 429, 'quota', {'Retry-After': '3'}, None)
             return {'success': True, 'data': {}}
         client = self.client(transport)
         client.request('GET', '/defi/v3/token/list')
         self.assertEqual(client.requests, 2)
         self.assertEqual(sum(self.store.costs), 100)
-        self.assertIn(30, self.sleeps)
+        self.assertIn(3, self.sleeps)
         self.assertTrue(all(0 <= x <= 30 for x in self.sleeps))
+
+    def test_long_retry_after_defers_without_repeating_or_reserving_more(self):
+        def transport(request):
+            raise HTTPError(request.full_url,429,'quota',{'Retry-After':'999'},None)
+        client=self.client(transport)
+        with self.assertRaises(BirdeyeError):client.request('GET','/defi/v3/token/list')
+        self.assertEqual(client.requests,1)
+        self.assertEqual(sum(self.store.costs),50)
+        self.assertEqual((client.not_before-NOW).total_seconds(),999)
+        self.assertFalse(any(self.sleeps))
+
+    def test_retry_deadline_survives_client_recreation_and_reserves_no_new_credits(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from wallets.storage import Store as DurableStore
+        def limited(request):
+            raise HTTPError(request.full_url,429,'quota',{'Retry-After':'999'},None)
+        config={'max_retries':0,'max_credits_per_run':800,'monthly_credit_ceiling':28000}
+        with TemporaryDirectory() as directory,DurableStore(Path(directory)/'private.sqlite') as store:
+            one=BirdeyeClient('fixture',store,config,transport=limited,clock=lambda:NOW)
+            with self.assertRaises(BirdeyeError):one.request('GET','/defi/v3/token/list')
+            two=BirdeyeClient('fixture',store,config,transport=lambda req:self.fail('Não pode fazer rede'),clock=lambda:NOW)
+            with self.assertRaises(BudgetExceeded):two.request('POST','/wallet/v2/pnl/details')
+            self.assertEqual(two.requests,0)
+            self.assertEqual(store.db.execute('SELECT credits FROM budgets').fetchone()[0],50)
 
     def test_run_and_monthly_quota(self):
         client = self.client(lambda request: {'success': True, 'data': {}}, max_credits_per_run=49)

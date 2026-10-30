@@ -1,6 +1,6 @@
 """PnL barato: cobertura explícita, paginação e resultados do fornecedor."""
 from copy import deepcopy
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from decimal import Decimal
 import unittest
 from unittest.mock import patch
@@ -41,6 +41,8 @@ class Client:
 
 class ProfitPrefilterTests(unittest.TestCase):
     def setUp(self):
+        clock=patch('wallets.profit_prefilter.utcnow',return_value=NOW)
+        clock.start();self.addCleanup(clock.stop)
         blocker=patch('socket.socket.connect',side_effect=AssertionError('Rede proibida'))
         blocker.start();self.addCleanup(blocker.stop)
 
@@ -169,6 +171,57 @@ class ProfitPrefilterTests(unittest.TestCase):
         result=prefilter_wallet(client,WALLET,7,{},NOW)
         self.assertEqual(result['raw_metrics']['failure_http_status'],429)
         self.assertFalse(result['passed'])
+
+
+    def test_receipt_times_use_the_injected_actual_clock_per_response(self):
+        first=response([token(0,10)],total=2,pnl=20)
+        second=response([token(1,10)],total=2,pnl=20)
+        received=iter((NOW+timedelta(minutes=1),NOW+timedelta(minutes=2)))
+        r=prefilter_wallet(Client(first,second),WALLET,7,{'prefilter_max_pages':2},
+                           NOW-timedelta(hours=1),clock=lambda:next(received))
+        self.assertEqual(r['raw_metrics']['observed_at'],iso(NOW-timedelta(hours=1)))
+        self.assertEqual(r['raw_metrics']['fetched_at'],iso(NOW+timedelta(minutes=2)))
+        self.assertEqual([x['fetched_at'] for x in r['raw_metrics']['responses']],
+                         [iso(NOW+timedelta(minutes=1)),iso(NOW+timedelta(minutes=2))])
+        self.assertEqual([x['snapshot_status'] for x in r['raw_metrics']['responses']],['current','current'])
+        self.assertTrue(r['passed'])
+
+    def test_future_snapshot_blocks_prefilter_even_with_positive_pnl(self):
+        value=response([token(0,10)])
+        value['data']['meta']['time']=iso(NOW+timedelta(seconds=1))
+        r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
+        self.assertFalse(r['passed']);self.assertTrue(r['_future_snapshot'])
+        self.assertIn('provider_future_snapshot',r['reasons'])
+        self.assertEqual(r['pnl_usd'],10)
+        self.assertEqual(r['raw_metrics']['responses'][0]['snapshot_status'],'future')
+
+    def test_a_later_page_cannot_erase_an_earlier_future_snapshot(self):
+        first=response([token(0,10)],total=2,pnl=20)
+        first['data']['meta']['time']=iso(NOW+timedelta(seconds=1))
+        second=response([token(1,10)],total=2,pnl=20)
+        r=prefilter_wallet(Client(first,second),WALLET,7,{'prefilter_max_pages':2},NOW)
+        self.assertFalse(r['passed']);self.assertTrue(r['_future_snapshot'])
+        self.assertEqual(r['raw_metrics']['snapshot_at'],iso(NOW))
+        self.assertEqual([x['snapshot_status'] for x in r['raw_metrics']['responses']],['future','current'])
+
+    def test_missing_stale_and_invalid_metadata_preserve_only_unverified_triage(self):
+        for metadata in (None,[],False,'invalid',{}, {'time':None},{'time':True},
+                         {'time':'bad'},{'time':'2026-10-30T12:00:00'},
+                         {'time':iso(NOW-timedelta(hours=24,seconds=1))}):
+            value=response([token(0,10)]);value['data']['meta']=metadata
+            with self.subTest(metadata=metadata):
+                r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
+                self.assertTrue(r['passed']) # apenas triagem, nunca prova temporal
+                self.assertFalse(r['_future_snapshot'])
+                self.assertIn('NÃO VERIFICADA',' '.join(r['limitations']))
+                self.assertIn(r['raw_metrics']['responses'][0]['snapshot_status'],('unknown','stale'))
+
+    def test_exactly_24_hours_old_snapshot_is_not_stale_at_receipt(self):
+        value=response([token(0,10)])
+        value['data']['meta']['time']=iso(NOW-timedelta(hours=24))
+        r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
+        self.assertEqual(r['raw_metrics']['responses'][0]['snapshot_status'],'current')
+        self.assertTrue(r['passed'])
 
 
 if __name__=='__main__':unittest.main()

@@ -61,7 +61,25 @@ def _family_client(store, api_config, previous):
     settings=dict(api_config)
     settings['max_requests_per_run']=max(0,int(api_config.get('max_requests_per_run',60))-sum(count(c,'requests') for c in previous))
     settings['max_credits_per_run']=max(0,int(api_config.get('max_credits_per_run',800))-sum(count(c,'credits') for c in previous))
-    return BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,settings)
+    client=BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,settings)
+    for field in ('_last_call','not_before'):
+        values=[]
+        for previous_client in previous:
+            try:values.append(parse_time(getattr(previous_client,field,None)))
+            except (ValueError,TypeError,OverflowError):pass
+        if values:setattr(client,field,max(values))
+    return client
+
+
+def _deep_allowed(prefilter30):
+    """Uma lacuna30d permite medir7d próprios para B; uma falha conhecida não."""
+    if not isinstance(prefilter30,dict):return False
+    if prefilter30.get('passed') is True:return True
+    hard={'provider_pnl_not_positive','activity_over_daily_limit','provider_activity_absent',
+          'prefilter_sample_insufficient','pnl_wallet_mismatch','provider_future_snapshot'}
+    if any(str(reason).split(':',1)[0] in hard for reason in prefilter30.get('reasons',[])):
+        return False
+    return prefilter30.get('pnl_usd') is None
 
 
 def _codes(values):
@@ -75,7 +93,7 @@ def _codes(values):
         'provider_7d','provider_30d','deep_coverage','recent_activity','sol_sample',
         'known_cost_scope','sol_worst_case','profit_factor','winner_removal','concentration',
         'execution_intensity','holding_horizon','identity','cohort_exclusion','sol_costs',
-        'pnl_unavailable','excluded_tag','discovery_activity_outside_window',
+        'pnl_unavailable','provider_dates','provider_future_snapshot','excluded_tag','discovery_activity_outside_window',
         'discovery_time_unknown','unsupported_network','pnl_pagination_changed',
         'pnl_token_schema_unknown','pnl_duplicate_token','pnl_pagination_incoherent','pnl_wallet_mismatch'}
     for value in values:
@@ -109,7 +127,11 @@ def _birdeye_trade_evidence(client,wallet,start,end,pages):
 
 
 def run_pipeline(store,config,budget,checkpoint,output,now=None):
-    now=now or utcnow();start=now-timedelta(days=7);settings=config['profit']
+    now=now or utcnow()
+    current=utcnow()
+    if not current-timedelta(minutes=5)<=now<=current:
+        raise ValueError('Este perfil usa respostas móveis atuais e não suporta backtests com uma data antiga.')
+    start=now-timedelta(days=7);settings=config['profit']
     ensure_schema(store)
     bird=BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,config['api'])
     helius=HeliusClient(os.environ.get('HELIUS_API_KEY',''),store,config['helius'])
@@ -146,7 +168,7 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
             candidate['prefilter30']=prefilter_wallet(bird,candidate['wallet'],30,config,now)
             counts['persistence']+=1
             histogram.update(_codes(candidate['prefilter30'].get('reasons',[])))
-    deep_candidates=[c for c in provisional if c.get('prefilter30',{}).get('passed')][:int(settings.get('max_deep',2))]
+    deep_candidates=[c for c in provisional if _deep_allowed(c.get('prefilter30'))][:int(settings.get('max_deep',2))]
     wallet_client=bird
     bird=_family_client(store,config['api'],[discovery_client,wallet_client])
     clients={'birdeye':bird,'helius':helius}

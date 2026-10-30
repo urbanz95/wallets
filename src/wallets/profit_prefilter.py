@@ -1,12 +1,13 @@
 """Pré-filtro barato WAC do fornecedor, separado do FIFO próprio em SOL."""
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from .analysis import SETTLEMENT_TOKENS
 from .birdeye import BirdeyeError
 from .collection import decimal, valid_address
-from .models import iso, parse_time
+from .models import iso, parse_time, utcnow
 
 ZERO = Decimal(0)
 ENDPOINT = '/wallet/v2/pnl/details'
@@ -22,7 +23,7 @@ def _nested(row, group, field):
     return decimal(group_value.get(field)) if isinstance(group_value, dict) else None
 
 
-def prefilter_wallet(client, wallet, days, config, now):
+def prefilter_wallet(client, wallet, days, config, now, *, clock=None):
     """Uma aprovação aqui significa apenas passar um pré-filtro do fornecedor.
 
     PF/concentração só existem com todos os tokens da resposta paginada. Uma
@@ -33,13 +34,15 @@ def prefilter_wallet(client, wallet, days, config, now):
         raise ValueError('Carteira ou período do pré-filtro inválidos.')
     settings = config.get('profit', config)
     now = parse_time(now)
+    clock = clock or utcnow
     result = {'wallet': wallet, 'days': days, 'tokens_count': None, 'pnl_usd': None,
               'realized_pnl_usd': None, 'unrealized_pnl_usd': None,
               'win_rate': None, 'profit_factor': None, 'top1_share': None,
               'top3_share': None, 'trade_count': None, 'trades_per_day': None,
-              'complete': False, 'passed': False, 'response_received': False, 'reasons': [], 'tokens': [],
+              'complete': False, 'passed': False, 'response_received': False, '_future_snapshot': False, 'reasons': [], 'tokens': [],
               'raw_metrics': {'method': 'wac', 'position_scope': 'duration_only',
-                              'duration': str(days)+'d', 'observed_at': iso(now)},
+                              'duration': str(days)+'d', 'observed_at': iso(now), 'responses': [],
+                              'snapshot_at': None, 'fetched_at': None},
               'limitations': ['Métricas USD da Birdeye para pré-filtro; não são FIFO próprio em SOL, lucro líquido auditado ou prova de execução reproduzível.']}
     maximum_pages = max(1, min(100, int(settings.get('prefilter_max_pages', 1))))
     raw_rows, summary, snapshot_at = [], None, None
@@ -53,6 +56,11 @@ def prefilter_wallet(client, wallet, days, config, now):
                 'position_scope': 'duration_only', 'sort_by': 'last_trade',
                 'sort_type': 'desc', 'offset': page*100, 'limit': 100,
             })
+            fetched_at = parse_time(clock())
+            receipt = {'page': page+1, 'fetched_at': iso(fetched_at), 'snapshot_at': None,
+                       'snapshot_status': 'unknown'}
+            result['raw_metrics']['responses'].append(receipt)
+            result['raw_metrics']['fetched_at'] = iso(fetched_at)
             result['response_received'] = True
             data = response.get('data') if isinstance(response, dict) else None
             if not isinstance(data, dict) or not isinstance(data.get('tokens'), list) or not isinstance(data.get('summary'), dict):
@@ -60,11 +68,32 @@ def prefilter_wallet(client, wallet, days, config, now):
             meta=data.get('meta')
             if isinstance(meta,dict) and meta.get('address',wallet) != wallet:
                 result['reasons'].append('pnl_wallet_mismatch'); return result
+            raw_snapshot = meta.get('time') if isinstance(meta,dict) else None
+            try:
+                snapshot = parse_time(raw_snapshot)
+            except (ValueError, TypeError, OverflowError, OSError):
+                snapshot = None
+            snapshot_at = iso(snapshot) if snapshot is not None else None
+            receipt['snapshot_at'] = snapshot_at
+            result['raw_metrics']['snapshot_at'] = snapshot_at
+            if snapshot is None:
+                receipt['snapshot_status'] = 'unknown'
+                result['limitations'].append('Data do snapshot Birdeye ausente ou inválida; atualidade e ausência de informação futura NÃO VERIFICADAS.')
+            elif snapshot > fetched_at:
+                receipt['snapshot_status'] = 'future'
+                result['_future_snapshot'] = True
+                if 'provider_future_snapshot' not in result['reasons']:
+                    result['reasons'].append('provider_future_snapshot')
+                result['limitations'].append('Snapshot Birdeye posterior à receção da resposta; pré-filtro bloqueado por informação futura.')
+            elif fetched_at-snapshot > timedelta(hours=24):
+                receipt['snapshot_status'] = 'stale'
+                result['limitations'].append('Snapshot Birdeye com mais de 24 horas na receção; atualidade NÃO VERIFICADA.')
+            else:
+                receipt['snapshot_status'] = 'current'
             candidate_summary = data['summary']
             if summary is not None and summary != candidate_summary:
                 result['reasons'].append('pnl_pagination_changed'); return result
             summary = candidate_summary
-            snapshot_at = (data.get('meta') or {}).get('time') if isinstance(data.get('meta'), dict) else None
             total = _integer(summary.get('unique_tokens'))
             if total is None:
                 result['reasons'].append('pnl_token_count_unknown'); return result
@@ -153,5 +182,5 @@ def prefilter_wallet(client, wallet, days, config, now):
         result['reasons'].append('prefilter_sample_insufficient')
     # Os indicadores adicionais ordenam o pré-filtro. O motor de evidência e a
     # contabilidade própria decidem depois; um campo desconhecido não é um passe.
-    result['passed'] = not result['reasons']
+    result['passed'] = not result['reasons'] and not result['_future_snapshot']
     return result

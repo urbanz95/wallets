@@ -116,6 +116,31 @@ def _temporal_evidence(deep, now, max_age):
         return False, {'period_start': None, 'period_end': None, 'fetched_at': None}
 
 
+
+def _provider_temporal_evidence(prefilter, now, max_age):
+    raw = _mapping(prefilter.get('raw_metrics'))
+    receipts = raw.get('responses')
+    receipts = [raw]+receipts if isinstance(receipts, list) else [raw]
+    evidence = []
+    known = True
+    valid = prefilter.get('_future_snapshot') is not True
+    for receipt in receipts:
+        row = _mapping(receipt)
+        try:
+            snapshot = parse_time(row.get('snapshot_at'))
+            fetched = parse_time(row.get('fetched_at'))
+        except (ValueError, TypeError, OverflowError, OSError):
+            known = False
+            valid = False
+            evidence.append({'snapshot_at': None, 'fetched_at': None, 'current': False})
+            continue
+        coherent = snapshot <= fetched <= now
+        fresh = coherent and now-snapshot <= timedelta(hours=float(max_age)) and now-fetched <= timedelta(hours=float(max_age))
+        valid = valid and fresh
+        evidence.append({'snapshot_at': snapshot, 'fetched_at': fetched, 'current': bool(fresh)})
+    return known, bool(known and valid), evidence
+
+
 def _score_component(components, name, maximum, fraction):
     fraction = ONE if fraction is True else ZERO if fraction is False else _number(fraction)
     fraction = max(ZERO, min(ONE, fraction)) if fraction is not None else ZERO
@@ -146,6 +171,15 @@ def _rank_one(candidate, criteria, now):
         'Pré-filtro Birdeye 30d positivo; proxy sobreposto, não persistência independente.' if positive30 else
         'Pré-filtro Birdeye 30d indisponível, incompleto ou sem resultado/critério positivo.',
         {'pnl_usd': pnl30, 'complete': pre30.get('complete') is True, 'passed': pre30.get('passed') is True})
+
+
+    dates7_known, dates7_ok, dates7 = _provider_temporal_evidence(pre7, now, criteria['max_data_age_hours'])
+    dates30_known, dates30_ok, dates30 = _provider_temporal_evidence(pre30, now, criteria['max_data_age_hours'])
+    provider_dates_ok = dates7_ok and dates30_ok
+    add('provider_dates', dates7_known and dates30_known, provider_dates_ok,
+        'Snapshots Birdeye 7d/30d anteriores à receção, atuais e disponíveis na avaliação.' if provider_dates_ok else
+        'Datas dos snapshots/receções Birdeye ausentes, inválidas, antigas ou futuras; não permitem nível A.',
+        {'prefilter7': dates7, 'prefilter30': dates30})
 
     period_ok, period = _temporal_evidence(deep, now, criteria['max_data_age_hours'])
     complete = deep.get('complete') is True and period_ok
@@ -284,6 +318,8 @@ def _rank_one(candidate, criteria, now):
         unverified.append({'name': 'unknown_token_costs', 'reason': 'Custos e resultados dos tokens UNKNOWN NÃO VERIFICADOS; não são convertidos em zero.'})
     if (known7 and pre7.get('complete') is not True) or (known30 and pre30.get('complete') is not True):
         unverified.append({'name': 'provider_partial_tokens', 'reason': 'Paginação de tokens do fornecedor NÃO VERIFICADA; os headlines 7d/30d são proxies separados da contabilidade SOL.'})
+    if not provider_dates_ok:
+        unverified.append({'name': 'provider_dates', 'reason': 'Atualidade e coerência temporal dos pré-filtros 7d/30d NÃO VERIFICADAS.'})
     if not complete:
         unverified.append({'name': 'complete_history', 'reason': 'Histórico integral de sete dias NÃO VERIFICADO.'})
     secondary_notes = []

@@ -5,14 +5,15 @@ from decimal import Decimal
 from hashlib import sha256
 import json
 from io import BytesIO
+from email.utils import parsedate_to_datetime
 import math
 import re
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, HTTPRedirectHandler, build_opener
-from .models import dumps, utcnow
-from .api_diagnostics import extract_private_diagnostic
+from .models import dumps, iso, parse_time, utcnow
+from .api_diagnostics import extract_private_diagnostic, extract_restriction_diagnostic
 
 # Não aceitar URLs arbitrários, RPC, endpoints privados ou upgrades automáticos.
 ENDPOINTS = {
@@ -109,6 +110,10 @@ class BirdeyeClient:
         self._last_call = None
         self._halted = False
         self.last_http_status = None
+        self.not_before = None
+        if hasattr(store,'get_cursor'):
+            try:self.not_before=parse_time(store.get_cursor('birdeye:retry-not-before:v1'))
+            except (ValueError,TypeError,OverflowError):pass
 
     @staticmethod
     def _http(request):
@@ -154,6 +159,12 @@ class BirdeyeClient:
                               'X-API-KEY': self.api_key, 'x-chain': 'solana',
                               'Accept': 'application/json', 'Content-Type': 'application/json'})
         for attempt in range(self.config.get('max_retries', 2) + 1):
+            if self.not_before is not None:
+                delay=max(0,(self.not_before-self.clock()).total_seconds())
+                if delay>60:
+                    raise BudgetExceeded('Retry-After do fornecedor exige adiar a execução; nenhuma nova quota reservada.')
+                if delay:self.sleep(delay)
+                self.not_before=None
             self._reserve(cost)
             try:
                 result = self.transport(request)
@@ -171,7 +182,7 @@ class BirdeyeClient:
                 status = exc.code
                 self.last_http_status = status
                 if status in (401,402,403,429) and exc.fp is not None:
-                    try: private=extract_private_diagnostic(exc.read(16385),self.api_key)
+                    try: private=extract_restriction_diagnostic(exc.read(16385),self.api_key)
                     except (OSError,ValueError,TypeError): private={}
                     if private:
                         self.store.record_api_failure('birdeye',method+' '+path,status,self.clock(),private)
@@ -179,13 +190,22 @@ class BirdeyeClient:
                     self._halted = True
                     raise AccessDenied(f'Birdeye recusou acesso ({status}) em {method} {path}; sem alternativa de fornecedor/plano.') from None
                 if status == 429 or status >= 500:
+                    retry = exc.headers.get('Retry-After', '') if exc.headers else ''
+                    fallback = 60 if status==429 else 2**attempt
+                    try:
+                        delay=float(retry)
+                    except (TypeError,ValueError):
+                        try:delay=(parsedate_to_datetime(retry)-self.clock()).total_seconds()
+                        except (TypeError,ValueError,OverflowError):delay=fallback
+                    if not math.isfinite(delay):delay=fallback
+                    delay=max(1,delay)
+                    self.not_before=self.clock()+timedelta(seconds=min(delay,366*86400))
+                    if hasattr(self.store,'set_cursor'):
+                        self.store.set_cursor('birdeye:retry-not-before:v1',iso(self.not_before))
+                    if delay>60:
+                        self._halted=True
+                        raise BirdeyeError(f'Birdeye impôs adiamento ({status}); Retry-After excede a espera desta execução.') from None
                     if attempt < self.config.get('max_retries', 2):
-                        retry = exc.headers.get('Retry-After', '') if exc.headers else ''
-                        try:
-                            delay = float(retry)
-                        except (TypeError, ValueError):
-                            delay = 2 ** attempt
-                        self.sleep(min(30, max(1, delay)))
                         continue
                 if status == 429:
                     self._halted = True
