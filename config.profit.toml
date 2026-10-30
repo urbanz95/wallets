@@ -1,7 +1,7 @@
 # Perfil experimental de ranking por lucro. O funil usa exclusivamente [profit]
 # para seleção e [api]/[helius] para rede; os restantes campos mantêm compatibilidade
 # com o leitor comum de configuração, não aprovam o ranking nem Telegram.
-criteria_version = "2026-10-30.profit.1"
+criteria_version = "2026-10-30.profit.2"
 lookback_days = 7
 max_data_age_hours = 24
 max_evaluation_age_hours = 24
@@ -84,18 +84,18 @@ discovery_request_budget = 5
 # Ranking de investigação; não é aprovação Telegram.
 [profit]
 enabled = true
-version = "2026-10-30.profit.1"
+version = "2026-10-30.profit.2"
 discovery_budget = 230
-prefilter_budget = 210
+prefilter_budget = 390
 persistence_budget = 90
 deep_budget = 270
 helius_deep_budget = 200
-max_prefilters = 7
+max_prefilters = 13
 max_persistence = 3
 max_deep = 2
 discovery_gainers_limit = 100
 discovery_max_tokens = 5
-discovery_sort_by = "realized_pnl"
+discovery_global_sort_by = "realized_pnl"
 discovery_min_liquidity = 100000
 discovery_min_volume_24h_usd = 100000
 discovery_max_token_age_days = 7

@@ -20,7 +20,7 @@ from .models import dumps, parse_time
 
 LISBON = ZoneInfo('Europe/Lisbon')
 STAGES = frozenset(('candidates', 'pre_filter', 'prefilter', 'pnl_details', 'persistence',
-                    'deep', 'top3', 'discovered', 'prefiltered', 'pnl_7d', 'pnl_30d'))
+                    'pnl_responses', 'prefilter_passed', 'deep', 'top3', 'discovered', 'prefiltered', 'pnl_7d', 'pnl_30d'))
 BUDGET_KEYS = frozenset(('discovery', 'prefilter', 'persistence', 'deep', 'total', 'totals',
                          'stages', 'by_stage', 'birdeye', 'helius', 'reserved', 'attempted',
                          'refunded', 'requests', 'used', 'consumed', 'credits', 'cu',

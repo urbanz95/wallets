@@ -37,7 +37,7 @@ def prefilter_wallet(client, wallet, days, config, now):
               'realized_pnl_usd': None, 'unrealized_pnl_usd': None,
               'win_rate': None, 'profit_factor': None, 'top1_share': None,
               'top3_share': None, 'trade_count': None, 'trades_per_day': None,
-              'complete': False, 'passed': False, 'reasons': [], 'tokens': [],
+              'complete': False, 'passed': False, 'response_received': False, 'reasons': [], 'tokens': [],
               'raw_metrics': {'method': 'wac', 'position_scope': 'duration_only',
                               'duration': str(days)+'d', 'observed_at': iso(now)},
               'limitations': ['Métricas USD da Birdeye para pré-filtro; não são FIFO próprio em SOL, lucro líquido auditado ou prova de execução reproduzível.']}
@@ -53,6 +53,7 @@ def prefilter_wallet(client, wallet, days, config, now):
                 'position_scope': 'duration_only', 'sort_by': 'last_trade',
                 'sort_type': 'desc', 'offset': page*100, 'limit': 100,
             })
+            result['response_received'] = True
             data = response.get('data') if isinstance(response, dict) else None
             if not isinstance(data, dict) or not isinstance(data.get('tokens'), list) or not isinstance(data.get('summary'), dict):
                 result['reasons'].append('pnl_schema_unknown'); return result

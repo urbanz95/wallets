@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from test_sol_accounting import END, WALLET, pair
 from wallets.storage import Store
-from wallets.profit_pipeline import run_pipeline, _provider_order
+from wallets.profit_pipeline import run_pipeline, _provider_order, _family_client
 from wallets.profit_persistence import latest_run
 
 
@@ -31,7 +31,7 @@ class ProfitPipelineTests(unittest.TestCase):
         def prefilter(client,wallet,days,config,now):
             calls.append((wallet,days))
             return {'wallet':wallet,'days':days,'passed':True,'pnl_usd':Decimal(100),
-                    'complete':True,'tokens_count':40,'profit_factor':Decimal(2),
+                    'complete':True,'response_received':True,'tokens_count':40,'profit_factor':Decimal(2),
                     'top3_share':Decimal('.4'),'trade_count':100,'reasons':[]}
         class History:
             def __init__(self,*args):pass
@@ -53,6 +53,8 @@ class ProfitPipelineTests(unittest.TestCase):
             self.assertEqual(budget.names,['discovery','prefilter','persistence','deep'])
             self.assertEqual(sum(days==7 for _,days in calls),4)
             self.assertEqual(sum(days==30 for _,days in calls),3)
+            self.assertEqual(summary['stages']['pnl_responses'],4)
+            self.assertEqual(summary['stages']['prefilter_passed'],4)
             self.assertEqual(summary['stages']['deep'],1)
             self.assertEqual(summary['stages']['top3'],3)
             saved=latest_run(store)
@@ -72,3 +74,36 @@ class ProfitPipelineTests(unittest.TestCase):
         b={'wallet':'b','origins':[],'prefilter7':{'passed':True,'pnl_usd':100,'tokens_count':40,'profit_factor':2,'top3_share':.4}}
         c={'wallet':'c','origins':['x','y'],'prefilter7':{'passed':True,'pnl_usd':50}}
         self.assertEqual([r['wallet'] for r in sorted([a,b,c],key=_provider_order)],['c','b','a'])
+
+    def test_family_circuits_propagate_auth_but_preserve_global_budgets_after_429(self):
+        from types import SimpleNamespace
+        api={'max_requests_per_run':60,'max_credits_per_run':800}
+        blocked=SimpleNamespace(_halted=True,last_http_status=429,requests=2,credits=80)
+        with patch('wallets.profit_pipeline.BirdeyeClient') as factory:
+            _family_client(object(),api,[blocked])
+            settings=factory.call_args.args[2]
+            self.assertEqual(settings['max_requests_per_run'],58)
+            self.assertEqual(settings['max_credits_per_run'],720)
+            factory.assert_called_once()
+        for status in (401,402,403):
+            blocked.last_http_status=status
+            with patch('wallets.profit_pipeline.BirdeyeClient') as factory:
+                self.assertIs(_family_client(object(),api,[blocked]),blocked)
+                factory.assert_not_called()
+
+    def test_wallet_family_429_does_not_retry_on_another_wallet(self):
+        from io import BytesIO
+        from urllib.error import HTTPError
+        from wallets.birdeye import BirdeyeClient
+        from wallets.profit_prefilter import prefilter_wallet
+        calls=[]
+        def transport(request):
+            calls.append(1)
+            raise HTTPError(request.full_url,429,'quota',{},BytesIO(b'{"message":"Rate limited"}'))
+        with TemporaryDirectory() as directory,Store(Path(directory)/'private.sqlite') as store:
+            client=BirdeyeClient('fixture',store,{'max_retries':0,'max_credits_per_run':210},transport=transport)
+            a=prefilter_wallet(client,'A'*44,7,{},END)
+            b=prefilter_wallet(client,'B'*44,7,{},END)
+            self.assertEqual(len(calls),1)
+            self.assertFalse(a['passed']);self.assertFalse(b['passed'])
+            self.assertEqual(a['raw_metrics']['failure_http_status'],429)

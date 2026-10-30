@@ -62,7 +62,7 @@ class ProfitDiscoveryTests(unittest.TestCase):
         client=Client();r=discover(client,self.store,{},NOW)
         method,path,params,_=client.calls[0]
         self.assertEqual((method,path),('GET',GAINERS_ENDPOINT))
-        self.assertEqual(params,{'type':'1W','sort_by':'PnL','max_trade':700,'offset':0,'limit':100})
+        self.assertEqual(params,{'type':'1W','sort_by':'realized_pnl','max_trade':700,'offset':0,'limit':100})
         self.assertEqual(ENDPOINTS[('GET',GAINERS_ENDPOINT)],30)
         self.assertEqual(r['candidates'][0]['wallet'],A)
         self.assertEqual(r['candidates'][0]['discovery']['provider_pnl_usd'],Decimal(2000))
@@ -147,6 +147,17 @@ class ProfitDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(r['selected_tokens']),5)
         self.assertEqual(len(client.calls),7)
         self.assertEqual(sum(ENDPOINTS[(method,path)] for method,path,_,_ in client.calls),230)
+
+
+
+
+    def test_realized_sort_does_not_treat_marked_holder_gains_as_realized_profit(self):
+        marked=gainer(A,pnl=1000000);marked['realized_pnl']=-1
+        realized=gainer(B,pnl=100);realized['realized_pnl']=200
+        result=discover(Client(gainers=[marked,realized],tokens=[]),self.store,{},NOW)
+        self.assertEqual([row['wallet'] for row in result['candidates']],[B])
+        self.assertEqual(result['candidates'][0]['discovery']['provider_pnl_usd'],200)
+        self.assertEqual(result['candidates'][0]['discovery']['sources'][0]['sort_by'],'realized_pnl')
 
 
 if __name__=='__main__':unittest.main()

@@ -45,6 +45,25 @@ def _provider_order(candidate):
             -quality,-min(tokens or ZERO,Decimal(40)),-(amount or ZERO))
 
 
+def _family_client(store, api_config, previous):
+    """Circuitos por família, mas limites globais de pedidos/CU conservados.
+
+    Uma restrição de autenticação/plano propaga-se. Só um429 de uma família
+    deixa outra família Standard confirmada tentar o seu próprio pedido.
+    Não há troca de chave, repetição do endpoint bloqueado ou quota adicional.
+    """
+    for client in previous:
+        if getattr(client,'_halted',False) and getattr(client,'last_http_status',None) in (401,402,403):
+            return client
+    def count(client,field):
+        value=getattr(client,field,0)
+        return value if type(value) is int and value>=0 else 0
+    settings=dict(api_config)
+    settings['max_requests_per_run']=max(0,int(api_config.get('max_requests_per_run',60))-sum(count(c,'requests') for c in previous))
+    settings['max_credits_per_run']=max(0,int(api_config.get('max_credits_per_run',800))-sum(count(c,'credits') for c in previous))
+    return BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,settings)
+
+
 def _codes(values):
     """Motivos públicos são códigos, nunca texto da rede ou identidades."""
     result=[]
@@ -95,7 +114,7 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     bird=BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,config['api'])
     helius=HeliusClient(os.environ.get('HELIUS_API_KEY',''),store,config['helius'])
     clients={'birdeye':bird,'helius':helius}
-    histogram=Counter();counts={'candidates':0,'pre_filter':0,'pnl_details':0,'persistence':0,'deep':0,'top3':0}
+    histogram=Counter();counts={'candidates':0,'pre_filter':0,'pnl_details':0,'pnl_responses':0,'prefilter_passed':0,'persistence':0,'deep':0,'top3':0}
     with budget.stage('discovery',birdeye=int(settings.get('discovery_budget',230)),store=store,clients=clients):
         found=discover(bird,store,config,now)
     candidates=found['candidates']
@@ -107,6 +126,9 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
         status=row.get('http_status')
         if type(status) is int and status in (400,401,402,403,422,429,500,502,503,504):
             histogram.update(['source_http_'+str(status)])
+    discovery_client=bird
+    bird=_family_client(store,config['api'],[discovery_client])
+    clients={'birdeye':bird,'helius':helius}
     assessed=[]
     pre_candidates=candidates[:int(settings.get('max_prefilters',7))]
     pnl_page_cost=30*max(1,int(settings.get('prefilter_max_pages',1)))
@@ -114,6 +136,8 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
         for candidate in pre_candidates:
             candidate['prefilter7']=prefilter_wallet(bird,candidate['wallet'],7,config,now)
             counts['pnl_details']+=1;assessed.append(candidate)
+            counts['pnl_responses']+=int(candidate['prefilter7'].get('response_received') is True)
+            counts['prefilter_passed']+=int(candidate['prefilter7'].get('passed') is True)
             histogram.update(_codes(candidate['prefilter7'].get('reasons',[])))
     provisional=sorted((c for c in assessed if c['prefilter7'].get('passed')),key=_provider_order)
     persistence_candidates=provisional[:int(settings.get('max_persistence',3))]
@@ -123,6 +147,9 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
             counts['persistence']+=1
             histogram.update(_codes(candidate['prefilter30'].get('reasons',[])))
     deep_candidates=[c for c in provisional if c.get('prefilter30',{}).get('passed')][:int(settings.get('max_deep',2))]
+    wallet_client=bird
+    bird=_family_client(store,config['api'],[discovery_client,wallet_client])
+    clients={'birdeye':bird,'helius':helius}
     with budget.stage('deep',birdeye=min(int(settings.get('deep_budget',270)),len(deep_candidates)*12*int(settings.get('deep_birdeye_pages',3))),
                       helius=min(int(settings.get('helius_deep_budget',200)),len(deep_candidates)*100),store=store,clients=clients):
         history=HeliusHistory(helius,store,config)

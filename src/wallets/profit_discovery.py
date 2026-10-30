@@ -1,6 +1,6 @@
 """Descoberta por PnL fornecido, sem a confundir com contabilidade auditada.
 
-Contratos oficiais revistos em 30-10-2026: gainers usa ``PnL`` (maiúsculas),
+Contratos oficiais revistos em 30-10-2026: gainers permite ``PnL`` (maiúsculas) e ``realized_pnl``;
 mas top_traders usa ``realized_pnl``. Apenas endpoints Standard confirmados.
 """
 from __future__ import annotations
@@ -58,6 +58,10 @@ def discover(client, store, config, now):
     now = parse_time(now)
     start = now-timedelta(days=7)
     maximum_daily = Decimal(str(settings.get('max_trades_per_day', 100)))
+    global_sort=settings.get('discovery_global_sort_by','realized_pnl')
+    if global_sort not in ('PnL','realized_pnl'):
+        raise ValueError('Ordenação global PnL fora do contrato confirmado.')
+    global_metric='pnl' if global_sort=='PnL' else 'realized_pnl'
     candidates, rejected, errors = {}, {}, []
     selected_tokens = []
     ordinal = 0
@@ -92,7 +96,8 @@ def discover(client, store, config, now):
         row['tags'] = sorted(set(row['tags']) | set(tags))
         row['discovery']['sources'].append(evidence)
         if evidence['endpoint'] == GAINERS_ENDPOINT:
-            row['discovery']['provider_pnl_usd'] = evidence['metrics'].get('pnl')
+            row['discovery']['provider_pnl_usd'] = evidence['metrics'].get(global_metric)
+            row['discovery']['provider_sort_metric'] = global_metric
             row['discovery']['trade_count'] = _integer(evidence['metrics'].get('trade_count'))
             row['discovery']['rank_scope'] = 'wallet_provider_1W'
         elif row['discovery'].get('rank_scope') != 'wallet_provider_1W':
@@ -120,7 +125,7 @@ def discover(client, store, config, now):
     try:
         # O mínimo de PnL implícito do contrato é 1000 USD; não inventar min_pnl=0.
         rows = _items(client.request('GET', GAINERS_ENDPOINT, {
-            'type': '1W', 'sort_by': 'PnL',
+            'type': '1W', 'sort_by': global_sort,
             'max_trade': int(maximum_daily*7), 'offset': 0,
             'limit': min(100, max(1, int(settings.get('discovery_gainers_limit', 100)))),
         }))
@@ -128,19 +133,19 @@ def discover(client, store, config, now):
             wallet = row.get('address')
             if not valid_address(wallet):
                 continue
-            evidence = {'endpoint': GAINERS_ENDPOINT, 'type': '1W', 'sort_by': 'PnL',
+            evidence = {'endpoint': GAINERS_ENDPOINT, 'type': '1W', 'sort_by': global_sort,
                         'observed_at': iso(now), 'rank': rank,
                         'metrics': {key: decimal(row.get(key)) for key in GAINER_FIELDS}}
             if row.get('network', 'solana') != 'solana':
                 reject(wallet, ['unsupported_network'], evidence); continue
             trades = _integer(row.get('trade_count'))
-            if trades is None or decimal(row.get('pnl')) is None:
+            if trades is None or decimal(row.get(global_metric)) is None:
                 reject(wallet, ['discovery_metrics_unknown'], evidence); continue
             if trades == 0:
                 reject(wallet, ['discovery_activity_absent'], evidence); continue
             if Decimal(trades)/7 > maximum_daily:
                 reject(wallet, ['activity_over_daily_limit'], evidence); continue
-            if decimal(row.get('pnl')) <= ZERO:
+            if decimal(row.get(global_metric)) <= ZERO:
                 reject(wallet, ['provider_pnl_not_positive'], evidence); continue
             add(wallet, evidence)
     except BirdeyeError as exc:
