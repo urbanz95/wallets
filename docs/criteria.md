@@ -164,3 +164,5 @@ As datas7d/30d do fornecedor têm de satisfazer `snapshot ≤ receção ≤ aval
 ### Revisão `2026-10-30.profit.3`: tempo e evidência parcial
 
 Formaliza o gate de datas dos dois proxies e a partilha de pacing/Retry-After; os limiares financeiros da revisão1 mantêm-se. Quando a consulta30d não está disponível, pode fazer-se contabilidade própria7d para evidência B: a ausência30d nunca se torna uma aprovação e impede A. Um resultado30d conhecido não positivo, excesso de atividade, identidade divergente ou snapshot futuro continua a impedir avançar. Este é o desvio limitado ao estágio B proposto: aproveita as fontes permitidas que continuam disponíveis sem enfraquecer a decisão final.
+
+Se existem transações sem classificação, a intensidade de trades própria fica desconhecida; zero trades reconhecidos não significa zero operações. A contagem e frequência das pernas reconhecidas e o número total de operações observadas são métricas separadas.

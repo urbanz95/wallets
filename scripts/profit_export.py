@@ -52,7 +52,10 @@ def export_latest(output, *, db=None, vault=None):
                 or any(not isinstance(candidate, dict) for candidate in ranking)
                 or not isinstance(telemetry, dict)):
             raise ExportError('A fotografia não tem um ranking válido.')
-        reports = write_profit_reports(ranking, telemetry, Path(output))
+        assessed = snapshot.get('candidates', [])
+        if not isinstance(assessed, list):
+            raise ExportError('A fotografia não tem análises válidas.')
+        reports = write_profit_reports(ranking, telemetry, Path(output), assessed=assessed)
         return reports['xlsx'].resolve()
 
 

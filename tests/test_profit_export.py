@@ -124,6 +124,23 @@ class ProfitExportTests(unittest.TestCase):
         self.assertNotIn('entrada visível', stderr)
         vault.assert_not_called()
 
+    def test_export_restores_deep_candidates_outside_ranking_to_private_sheets(self):
+        extra_wallet, extra_token = 'E'*44, 'F'*44
+        snapshot = dict(self.snapshot, started_at=NOW.replace(hour=13), candidates=[
+            {'wallet': extra_wallet, 'deep': {'complete': False, 'reasons': ['partial_history'],
+                'tokens': [{'token': extra_token, 'known_cost': False,
+                            'unknown_reason': 'Inventário desconhecido'}]}}])
+        with Store(self.source) as store:
+            save_run(store, snapshot)
+        path = module.export_latest(self.output, db=self.source)
+        with ZipFile(path) as archive:
+            self.assertIn(extra_wallet, archive.read('xl/worksheets/sheet4.xml').decode())
+            self.assertIn(extra_token, archive.read('xl/worksheets/sheet5.xml').decode())
+        for filename in ('ranking_anonimo.csv','ranking_anonimo.json','ranking_anonimo.html'):
+            text = (self.output/filename).read_text(encoding='utf-8-sig')
+            self.assertNotIn(extra_wallet, text)
+            self.assertNotIn(extra_token, text)
+
     def test_missing_snapshot_or_source_is_not_silently_created(self):
         missing = self.root/'missing.sqlite'
         with self.assertRaises(module.ExportError):

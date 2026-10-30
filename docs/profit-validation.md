@@ -47,3 +47,30 @@ O estado experimental recuperado após a terceira execução ocupava 348 160 byt
 Mantêm-se NÃO VERIFICADOS inventário global, cobertura global, conversão histórica USD, custos não identificados, liquidez executável, execução de um seguidor, coordenação/MEV, identidade humana, etiquetas completas e persistência independente. Não foram alterados os limiares em resposta às carteiras observadas. Não foram adicionados fornecedores ou subscrições. Os secrets existentes chegaram para autenticar as consultas bem-sucedidas; HTTP 429 exige distinguir limite de frequência/quota no fornecedor, sem pedir um upgrade.
 
 A main continua independente. Este branch é manual; não se agendou uma segunda execução diária que somasse consumo à main. Ver [utilização](profit-experiment.md), [critérios e cálculo da amostra](criteria.md) e [contratos](capabilities.md).
+
+
+## Resultado final após as correções
+
+A [execução41021973206](https://github.com/urbanz95/wallets/actions/runs/41021973206), revisão `2026-10-30.profit.3`, percorreu todos os estágios. Foram consultados o ranking global por PnL realizado e cinco tokens recentes, com pacing partilhado e proteção temporal dos proxies.
+
+| Estágio | Contagem | Birdeye tentado | Helius tentado |
+|---|---:|---:|---:|
+| Candidatas únicas antes das exclusões | 150 | — | — |
+| Candidatas após exclusões | 113 | 230 CU na descoberta | 0 |
+| Pré-filtros7d com resposta / favoráveis | 13 / 9 | 390CU | 0 |
+| Consultas30d com resposta | 3 | 90CU | 0 |
+| Análises profundas | 2 | 36 CU | 200 créditos |
+| Top-3 por nível A / B / C | 0 / 2 / 1 | — | — |
+| Total desta execução | — | **746CU** | **200 créditos** |
+
+Foram reservados782 CU e devolvidos36 CU nunca tentados na análise profunda. Contabilizaram-se26 pedidos Birdeye e2 Helius. O consumo agregado das iterações e da sondagem descritas nesta entrega foi1506 CU Birdeye e200 créditos Helius; não se mascara o custo das tentativas de correção como consumo da execução final.
+
+Histograma final, por ocorrência:50 exclusões de etiquetas;3 pré-filtros com PnL do fornecedor não positivo;1 por intensidade acima do limite;2 históricos profundos parciais. Na amostra consultada,13 casos sem prova suficiente de amostra/custos/resultados SOL, PF, concentração ou horizonte;10 sem30d/datas completas porque apenas as três melhores receberam a consulta30d. São contagens de motivos, não carteiras únicas nem afirmações de que todas perderam dinheiro.
+
+**Os três lugares são candidatas com evidência B/B/C, não três carteiras cuja rentabilidade e acompanhamento estejam confirmados.** Nos dois históricos profundos observaram-se 9 e 53 tokens, mas nenhum atingiu custo SOL conhecido suficiente nesta avaliação. O realizado próprio, PF próprio e cenários sem vencedores ficam por apurar, nunca zero. Ambos os históricos mantêm continuação Helius e classificação insuficiente; os proxies7d/30d não substituem esses dados.
+
+A poda foi agora exercitada com dados reais:244 transações normalizadas em receipts,244 payloads Helius removidos após persistência e manifestos,0 payloads Helius brutos restantes. O SQLite recuperado tinha 1 204 224 bytes. Isso comprova persistência e poda nesta amostra, não cobertura integral ou precisão de custos que permaneceram desconhecidos. Reexecuções incrementais podem continuar a paginação; não se excede o orçamento para forçar uma aprovação.
+
+O Excel privado contém o top-3, pontuação, proxies7d/30d, motivos, NÃO VERIFICADO e folhas com as análises profundas e tokens, incluindo análises que fiquem fora do top-3. A recuperação por `scripts/profit_export.py` usa uma base temporária e não altera a fotografia. Nenhum endereço foi acrescentado aos resumos públicos. Não houve notificações.
+
+A suite final tem **586 testes** e cobre os formatos das respostas reais através de fixtures anónimas, datas futuras do fornecedor, pacing entre famílias, Retry-After e recuperação do Excel. A contabilidade SOL, os cenários de custo conhecido e a classificação A foram validados com fixtures; **não foi confirmada rentabilidade FIFO SOL em nenhuma carteira real nesta entrega**. O ranking já não fica vazio por impossibilidade artificial de atingir a seleção estrita, mas os limites de evidência continuam explícitos.

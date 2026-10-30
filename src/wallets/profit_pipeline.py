@@ -215,6 +215,6 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
                     'started_at':now,'finished_at':utcnow(),'candidates':assessed,'discovery_errors':found.get('errors',[]),
                     'ranking':ranked,'telemetry':telemetry})
     checkpoint()
-    report=write_profit_reports(ranked,telemetry,output)
+    report=write_profit_reports(ranked,telemetry,output,assessed=assessed)
     # O resultado público é construído pelo relator com allowlist; nunca é o ranking.
     return report['public_summary']

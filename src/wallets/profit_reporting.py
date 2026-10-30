@@ -201,15 +201,82 @@ def _xlsx(path, sheets):
             archive.writestr(f'xl/worksheets/sheet{index}.xml', _sheet(rows, widths))
 
 
-def write_profit_reports(ranking, telemetry, output):
-    """Escrever até três posições, mesmo sem nível A; não inventar entradas."""
+def _score_rows(components):
+    """Aceitar o mapa antigo e a lista detalhada produzida pelo classificador."""
+    if isinstance(components, dict):
+        return [(_text(name), _text(value)) for name, value in components.items()]
+    if isinstance(components, (list, tuple)):
+        return [(_text(component.get('name')), _text(component))
+                for component in components if isinstance(component, dict)]
+    return []
+
+
+def _deep_sheets(assessed, ranking):
+    """Prova privada das análises profundas, mesmo quando não estão no top-3."""
+    ranked = {row.get('wallet'): row for row in ranking}
+    overview = [('Carteira', 'Presente no top-3', 'Histórico profundo completo',
+                 'Início (Lisboa)', 'Fim (Lisboa)', 'Recolha (Lisboa)',
+                 'Cobertura e âmbito', 'Motivos da análise profunda',
+                 'Limitações da análise profunda', 'Motivos da avaliação',
+                 'NÃO VERIFICADO')+tuple(label for _, label in METRICS)]
+    tokens = [('Carteira', 'Endereço do token', 'Custo conhecido',
+               'Resultado realizado (SOL)', 'Subtotal realizado identificado (SOL)',
+               'Resultado conservador (SOL)', 'Custo restante (SOL)',
+               'Custo de aquisição identificado (SOL)', 'Quantidade aberta',
+               'Posição fechada', 'Resultado marcado (SOL)', 'Valor marcado (SOL)',
+               'Razão do custo desconhecido')]
+    seen = set()
+    for candidate in assessed:
+        deep = _map(candidate.get('deep'))
+        wallet = _text(candidate.get('wallet'))
+        if not deep or wallet in seen:
+            continue
+        if len(wallet) > 32767:
+            raise ValueError('Endereço excede o limite da célula Excel; identidade não truncada')
+        seen.add(wallet)
+        coverage = _map(deep.get('coverage'))
+        result = ranked.get(candidate.get('wallet'), candidate)
+        metrics = _map(deep.get('metrics'))
+        overview.append((wallet, _text(candidate.get('wallet') in ranked),
+                         _text(deep.get('complete')),
+                         _local(deep.get('period_start', coverage.get('start'))),
+                         _local(deep.get('period_end', coverage.get('end'))),
+                         _local(deep.get('fetched_at', coverage.get('fetched_at'))),
+                         _text(coverage), _text(deep.get('reasons', [])),
+                         _text(deep.get('limitations', [])),
+                         _text(result.get('reasons', [])), _text(result.get('unverified', [])))
+                        +tuple(_text(metrics.get(key)) for key, _ in METRICS))
+        for token in deep.get('tokens', []) or []:
+            if not isinstance(token, dict):
+                continue
+            mint = _text(token.get('token'))
+            if len(mint) > 32767:
+                raise ValueError('Endereço excede o limite da célula Excel; identidade não truncada')
+            keys = ('known_cost', 'realized_sol', 'identified_realized_sol',
+                    'worst_case_result_sol', 'remaining_cost_sol', 'acquisition_cost_sol',
+                    'open_quantity', 'closed', 'marked_result_sol', 'marked_value_sol',
+                    'unknown_reason')
+            tokens.append((wallet, mint)+tuple(_text(token.get(key)) for key in keys))
+    if not seen:
+        return []
+    return [('Análises profundas', overview, [58, 18, 24, 27, 27, 27]+[54]*5+[30]*len(METRICS)),
+            ('Tokens analisados', tokens, [58, 58]+[30]*10+[70])]
+
+
+def write_profit_reports(ranking, telemetry, output, *, assessed=()):
+    """Top-3 anónimo; análises profundas adicionais só no Excel privado."""
     ranking = [row for row in ranking if isinstance(row, dict)][:3]
+    assessed = [row for row in assessed if isinstance(row, dict)]
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     os.chmod(output, 0o700)
     identities = {str(row.get('wallet', '')) for row in ranking}
-    for row in ranking:
+    for row in ranking+assessed:
+        identities.add(str(row.get('wallet', '')))
         identities.update(value for value in row.get('origins', []) if isinstance(value, str))
+        for token in _map(row.get('deep')).get('tokens', []) or []:
+            if isinstance(token, dict) and isinstance(token.get('token'), str):
+                identities.add(token['token'])
     excel_rows = [HEADERS]
     anonymous_rows = []
     metric_rows = [('Posição', 'Âmbito', 'Métrica', 'Valor')]
@@ -235,8 +302,8 @@ def write_profit_reports(ranking, telemetry, output):
         for token in deep.get('tokens', []) or []:
             if isinstance(token, dict):
                 metric_rows.append((index, 'Resultado por token em SOL', _text(token.get('token')), _text(token)))
-        for key, value in _map(candidate.get('score_components')).items():
-            metric_rows.append((index, 'Pontuação', _text(key), _text(value)))
+        for key, value in _score_rows(candidate.get('score_components')):
+            metric_rows.append((index, 'Pontuação', key, value))
         for key, label in METRICS:
             metric_rows.append((index, 'FIFO em SOL / cenário conservador', label, _text(metrics.get(key))))
         for label, prefilter in (('Birdeye 7d — fornecido, não FIFO', pre7), ('Birdeye 30d — fornecido, não FIFO', pre30)):
@@ -245,6 +312,7 @@ def write_profit_reports(ranking, telemetry, output):
     notes = [('Informação', 'Como interpretar'),
              ('Níveis A/B/C', 'A: cumpre os critérios verificáveis nesta avaliação; B: pré-filtro e análise profunda parcial; C: só pré-filtro. Nenhum nível é aprovação integral ou autorização Telegram.'),
              ('Objetivo do ranking', 'Mostrar até três posições ordenadas com evidência e motivos, mesmo sem carteiras de nível A. Posição e pontuação não compensam uma verificação reprovada ou desconhecida.'),
+             ('Análises profundas adicionais', 'Quando disponíveis, as folhas Análises profundas e Tokens analisados incluem também carteiras fora do top-3. Uma análise profunda pode mostrar perdas, falhas ou custos desconhecidos; não significa seleção nem aprovação.'),
              ('Unidade SOL', 'Resultado recalculado em SOL. A evolução do câmbio SOL/USD pode mudar os sinais e as métricas; o resultado em USD permanece NÃO VERIFICADO.'),
              ('PnL do fornecedor', 'Os valores USD de 7d/30d são métricas Birdeye WAC fornecidas, usadas para ordenar e pré-filtrar. Não são a contabilidade própria em SOL nem prova de lucro líquido.'),
              ('Posições abertas', 'O cenário conservador subtrai todo o custo restante das posições abertas ao resultado realizado. Não afirma que o valor de mercado seja zero. O valor marcado, quando conhecido, é distinto.'),
@@ -257,8 +325,9 @@ def write_profit_reports(ranking, telemetry, output):
     paths = {kind: output/filename for kind, filename in (
         ('xlsx', 'ranking_carteiras.xlsx'), ('csv', 'ranking_anonimo.csv'),
         ('json', 'ranking_anonimo.json'), ('html', 'ranking_anonimo.html'))}
-    _xlsx(paths['xlsx'], [('Ranking', excel_rows, [12, 15, 18, 58]+[30]*(len(HEADERS)-4)),
-                            ('Métricas', metric_rows, [12, 48, 54, 70]), ('Notas', notes, [30, 115])])
+    sheets = [('Ranking', excel_rows, [12, 15, 18, 58]+[30]*(len(HEADERS)-4)),
+              ('Métricas', metric_rows, [12, 48, 54, 70]), ('Notas', notes, [30, 115])]
+    _xlsx(paths['xlsx'], sheets+_deep_sheets(assessed, ranking))
     anonymous_headers = [header for header in HEADERS if header != 'Carteira']
     with paths['csv'].open('w', encoding='utf-8-sig', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=anonymous_headers, delimiter=';')

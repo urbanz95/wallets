@@ -181,6 +181,54 @@ class ProfitReportingTests(unittest.TestCase):
         self.assertEqual(row[list(HEADERS).index('Resultado conservador, incluindo abertos (SOL)')],'-0.05')
         self.assertEqual(row[list(HEADERS).index('Custo restante das posições abertas (SOL)')],'1.173456789123456789')
 
+    def test_deep_assessment_outside_top_three_is_only_in_private_excel(self):
+        extra_wallet, extra_token = 'E'*44, 'F'*44
+        extra = candidate(wallet=extra_wallet, origins=[extra_token],
+                          reasons=['known_financial_failure'])
+        extra['deep']['coverage'] = {'start': NOW-timedelta(days=7), 'end': NOW,
+                                     'pages_complete': False, 'invalid_count': 2}
+        extra['deep']['reasons'] = ['deep_history_partial']
+        extra['deep']['tokens'] = [
+            {'token': extra_token, 'known_cost': True, 'realized_sol': Decimal('0.2'),
+             'identified_realized_sol': Decimal('0.2'), 'remaining_cost_sol': Decimal('0.6'),
+             'worst_case_result_sol': Decimal('-0.4'), 'unknown_reason': ''},
+            {'token': 'G'*44, 'known_cost': False, 'realized_sol': None,
+             'remaining_cost_sol': None, 'worst_case_result_sol': None,
+             'unknown_reason': 'Transferência recebida com custo desconhecido'}]
+        data = [candidate(0), candidate(1), candidate(2)]
+        result = write_profit_reports(data, telemetry(), self.root, assessed=[extra, extra])
+        with ZipFile(result['xlsx']) as archive:
+            workbook = ET.fromstring(archive.read('xl/workbook.xml'))
+            self.assertEqual([sheet.attrib['name'] for sheet in workbook.find('s:sheets', NS)],
+                             ['Ranking','Métricas','Notas','Análises profundas','Tokens analisados'])
+        self.assertEqual(len(self.sheet_rows(result['xlsx'], 1)), 4)
+        overview = self.sheet_rows(result['xlsx'], 4)
+        self.assertEqual(len(overview), 2)
+        self.assertEqual(overview[1][0], extra_wallet)
+        self.assertEqual(overview[1][1], 'Não')
+        self.assertIn('deep_history_partial', overview[1])
+        tokens = self.sheet_rows(result['xlsx'], 5)
+        self.assertEqual(tokens[1][:7], [extra_wallet, extra_token, 'Sim', '0.2','0.2','-0.4','0.6'])
+        self.assertEqual(tokens[2][2], 'Não')
+        self.assertEqual(tokens[2][3], 'Por apurar')
+        self.assertIn('custo desconhecido', tokens[2][-1])
+        for key in ('csv','json','html'):
+            text = result[key].read_text(encoding='utf-8-sig')
+            for identity in (extra_wallet, extra_token, 'G'*44):
+                self.assertNotIn(identity, text)
+        self.assertNotIn(extra_wallet, json.dumps(result['public_summary']))
+
+    def test_detailed_score_component_list_preserves_points_and_maximum(self):
+        value = candidate(score_components=[{'name': 'own_sol_profit_factor',
+                                              'points': Decimal('12.50'), 'maximum': 20}])
+        result = write_profit_reports([value], telemetry(), self.root)
+        rows = self.sheet_rows(result['xlsx'], 2)
+        component = next(row for row in rows if row[2] == 'own_sol_profit_factor')
+        self.assertEqual(component[1], 'Pontuação')
+        self.assertIn('12.50', component[3])
+        self.assertIn('maximum', component[3])
+        self.assertIn('20', component[3])
+
 
 if __name__ == '__main__':
     unittest.main()

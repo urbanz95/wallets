@@ -160,6 +160,8 @@ class SolAccountingTests(unittest.TestCase):
             with self.subTest():
                 result=self.analyze([row]);self.assertEqual(result['metrics']['known_tokens_count'],0)
                 self.assertIsNone(result['metrics']['worst_case_sol'])
+                self.assertIsNone(result['metrics']['trades_per_day'])
+                self.assertEqual(result['metrics']['recognized_trades_count'],0)
 
     def test_failed_transaction_fee_and_wrap_do_not_create_tokens(self):
         row=swap();row['meta']['err']={'InstructionError':[0,'failure']};row['meta']['fee']=5000
