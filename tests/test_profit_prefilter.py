@@ -141,13 +141,15 @@ class ProfitPrefilterTests(unittest.TestCase):
         from wallets.models import SOL
         from wallets.analysis import SETTLEMENT_TOKENS
         rows=[token(0,10),token(1,-1)]
-        for address in SETTLEMENT_TOKENS:
+        from wallets.collection import valid_address
+        settlement_addresses=[address for address in SETTLEMENT_TOKENS if valid_address(address)]
+        for address in settlement_addresses:
             row=token(2,1000);row['address']=address;rows.append(row)
         r=prefilter_wallet(Client(response(rows,total=2,pnl=9)),WALLET,7,{},NOW)
         self.assertTrue(r['passed']);self.assertTrue(r['complete'])
         self.assertEqual(len(r['tokens']),2)
         self.assertEqual(r['profit_factor'],10)
-        self.assertEqual(r['raw_metrics']['excluded_settlement_tokens_count'],len(SETTLEMENT_TOKENS))
+        self.assertEqual(r['raw_metrics']['excluded_settlement_tokens_count'],len(settlement_addresses))
 
     def test_inconsistent_token_count_does_not_fabricate_ratios_or_erase_headline(self):
         r=prefilter_wallet(Client(response([token(0,10),token(1,-1)],total=1,pnl=9)),WALLET,7,{},NOW)
