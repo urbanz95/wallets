@@ -128,6 +128,8 @@ def main(argv=None):
     parser.add_argument('--db', default='state/profit.sqlite')
     parser.add_argument('--output', default='reports/profit')
     parser.add_argument('--config', default='config.profit.toml')
+    parser.add_argument('--probe-wallet-access', action='store_true',
+                        help='Uma única consulta Wallet API a uma carteira já descoberta; sem ranking novo.')
     args = parser.parse_args(argv)
     try:
         for name in ('STATE_ENCRYPTION_KEY', 'BIRDEYE_API_KEY', 'HELIUS_API_KEY'):
@@ -135,9 +137,13 @@ def main(argv=None):
                 raise ExperimentError('Falta um segredo indispensável à experiência em Actions.')
         config = cli.load_config(args.config)
         key = os.environ['STATE_ENCRYPTION_KEY']
+        pipeline = None
+        if args.probe_wallet_access:
+            from wallets.profit_probe import run_probe
+            pipeline = run_probe
         summary = run_experiment(args.production_db, args.db, args.output, config,
             Vault(key), Vault(key, ExperimentGitHub(), compress_snapshot=True,
-                              max_state_bytes=EXPERIMENT_MAX_STATE_BYTES))
+                              max_state_bytes=EXPERIMENT_MAX_STATE_BYTES), pipeline=pipeline)
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     except (ExperimentError, ProfitBudgetError, VaultError, OSError, ValueError, sqlite3.DatabaseError) as exc:
         print('Experiência interrompida ('+type(exc).__name__+'); sem Telegram. Consultar o estado cifrado.')

@@ -120,6 +120,17 @@ class ProfitExperimentTests(unittest.TestCase):
             self.assertEqual(module.main([]),1)
         self.assertNotIn('TELEGRAM',str(output.call_args))
 
+    def test_probe_option_selects_single_wallet_probe_pipeline(self):
+        from wallets.profit_probe import run_probe
+        with patch.dict('os.environ', {'STATE_ENCRYPTION_KEY': 'fixture-key',
+                        'BIRDEYE_API_KEY': 'fixture-birdeye', 'HELIUS_API_KEY': 'fixture-helius'}, clear=True), \
+             patch.object(module.cli, 'load_config', return_value=self.config), \
+             patch.object(module, 'Vault'), patch.object(module, 'ExperimentGitHub'), \
+             patch.object(module, 'run_experiment', return_value={'telegram_sent': 0}) as runner, \
+             patch('builtins.print'):
+            self.assertEqual(module.main(['--probe-wallet-access']), 0)
+        self.assertIs(runner.call_args.kwargs['pipeline'], run_probe)
+
     def test_public_summary_only_copies_numeric_counts_histogram_and_costs(self):
         budget=SimpleNamespace(stats={'discovery':{'state':WALLET,
             'birdeye':{'reserved':230,'attempted':30,'refunded':200,'requests':1},'helius':{}}})

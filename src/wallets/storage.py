@@ -156,7 +156,7 @@ class Store:
 
     def record_api_failure(self,source,endpoint,status,when,diagnostic):
         """Mensagem já redigida: apenas cofre privado, nunca relatórios ou Telegram."""
-        if source != 'birdeye' or status not in (400,422):
+        if source != 'birdeye' or status not in (400,401,402,403,422,429):
             raise ValueError('Diagnóstico fora do âmbito permitido')
         payload=dumps({'http_status':status,'diagnostic':diagnostic})
         at=iso(when)

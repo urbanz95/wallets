@@ -170,6 +170,11 @@ class BirdeyeClient:
             except HTTPError as exc:
                 status = exc.code
                 self.last_http_status = status
+                if status in (401,402,403,429) and exc.fp is not None:
+                    try: private=extract_private_diagnostic(exc.read(16385),self.api_key)
+                    except (OSError,ValueError,TypeError): private={}
+                    if private:
+                        self.store.record_api_failure('birdeye',method+' '+path,status,self.clock(),private)
                 if status in (401, 402, 403):
                     self._halted = True
                     raise AccessDenied(f'Birdeye recusou acesso ({status}) em {method} {path}; sem alternativa de fornecedor/plano.') from None

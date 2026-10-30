@@ -2,11 +2,18 @@
 name: Experiência por lucro — branch sem Telegram
 on:
   workflow_dispatch:
+    inputs:
+      probe_wallet_access:
+        description: 'Sondagem: só um pedido à API de carteiras (30 CU), sem Telegram'
+        type: boolean
+        default: false
 permissions:
   contents: write
 jobs:
   experiment:
     uses: ./.github/workflows/profit.yml
+    with:
+      probe_wallet_access: ${{ inputs.probe_wallet_access }}
     secrets:
       STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
       BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}

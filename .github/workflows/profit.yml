@@ -1,7 +1,15 @@
 name: Ranking privado por lucro — experiência sem Telegram
 on:
   workflow_dispatch:
+    inputs:
+      probe_wallet_access:
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      probe_wallet_access:
+        type: boolean
+        default: false
     secrets:
       STATE_ENCRYPTION_KEY:
         required: true
@@ -36,9 +44,13 @@ jobs:
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-        run: >-
-          python scripts/profit_experiment.py --production-db state/production.sqlite
-          --db state/profit.sqlite --output reports/profit --config config.profit.toml
+          PROBE_WALLET_ACCESS: ${{ inputs.probe_wallet_access }}
+        shell: bash
+        run: |
+          args=()
+          if [ "$PROBE_WALLET_ACCESS" = "true" ]; then args+=(--probe-wallet-access); fi
+          python scripts/profit_experiment.py --production-db state/production.sqlite --db state/profit.sqlite --output reports/profit --config config.profit.toml "${args[@]}"
+
       - name: Cópia de recuperação cifrada
         if: always() && steps.restore.outcome == 'success'
         uses: actions/upload-artifact@v4

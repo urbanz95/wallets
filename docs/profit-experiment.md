@@ -11,6 +11,18 @@ Branch `feat/profit-evidence-funnel`, criado de `077096d`. Não foi feito merge 
 
 São usados os três secrets já configurados: `BIRDEYE_API_KEY`, `HELIUS_API_KEY` e `STATE_ENCRYPTION_KEY`. Este workflow não recebe secrets Telegram. Não há cron adicional: a experiência é manual para evitar somar automaticamente 800 CU diárias ao consumo da main.
 
+### Descarregar o Excel privado no seu computador
+
+Depois de instalar este projeto e a ferramenta GitHub CLI e de iniciar sessão com `gh auth login`, abra o terminal na pasta `wallets` e execute apenas:
+
+```sh
+python scripts/profit_export.py
+```
+
+Quando pedir `STATE_ENCRYPTION_KEY`, cole a mesma chave que guardou no secret do GitHub e carregue em Enter. A chave não aparece no ecrã; se já estiver configurada como variável de ambiente, não é pedida. O programa mostra só o caminho do ficheiro `reports/profit-private/ranking_carteiras.xlsx`: abra-o no Excel. Não são necessárias as chaves Birdeye/Helius nem as credenciais Telegram, não se gastam créditos de mercado e não se enviam mensagens.
+
+O exportador lê exclusivamente o cofre `wallets-state-profit-ranking`, verifica e descifra uma cópia temporária e apaga essa base temporária no fim, incluindo em caso de erro. Não altera o cofre nem a base original. Se já tiver a base local da experiência, use `python scripts/profit_export.py --db state/profit.sqlite`; nesse caso não precisa de chave nem de acesso ao GitHub. Se ainda não existir uma execução guardada, primeiro execute a experiência em Actions. A pasta `reports/` é ignorada pelo Git: mantenha o Excel privado e não o publique como artefacto, issue ou commit. Os CSV/JSON/HTML auxiliares são anónimos.
+
 ## Diagnóstico confirmado e correções
 
 1. A descoberta antiga ordenava por volume e descartava evidência de resultados. A nova usa `/trader/gainers-losers` em `1W`, `sort_by=PnL`, como origem principal. Complementa com até cinco tokens listados na Birdeye nos últimos sete dias e `/defi/v2/tokens/top_traders`, `sort_by=realized_pnl`. São preservados PnL, cashflow disponível, contagens, datas e etiquetas. O filtro de valorização mínima de 10% deixa de ser obrigatório. Etiquetas explícitas sniper/bundler/insider excluem desta população experimental; não constituem prova de fraude.
@@ -49,3 +61,5 @@ O resultado SOL conhecido é um **subtotal**; tokens UNKNOWN não são zero. Inv
 Ver [critérios](criteria.md) e [contratos oficiais e capacidades](capabilities.md). Testes usam fixtures e mocks; a validação autenticada e as suas contagens são registadas separadamente após a execução, sem publicar identidades.
 
 A primeira validação real expôs uma diferença de contrato: `tokens[]` inclui ativos de liquidação SOL/stablecoins, enquanto `summary.unique_tokens` os exclui. São agora separados antes de comparar contagens e calcular métricas. Se outra divergência persistir, o headline permanece um proxy e PF/concentração da lista ficam NÃO VERIFICADOS; isso não inventa uma lista completa. O histograma conta ocorrências de motivos em toda a amostra consultada, não carteiras únicas; uma carteira pode ter vários motivos.
+
+Se a fonte de tokens indicar HTTP429, a opção manual **probe_wallet_access** faz apenas uma consulta de 30CU à API de carteiras, usando um endereço já descoberto no estado cifrado. Não repete o pedido, não pesquisa novos endereços, não atualiza o ranking e não usa Helius ou Telegram. A resposta fica privada; só o código HTTP/contagens aparece no resumo. Serve para distinguir uma restrição da fonte de tokens de uma restrição também na API de carteiras; não autoriza contornar nenhuma quota.
