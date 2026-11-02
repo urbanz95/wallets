@@ -74,3 +74,88 @@ A poda foi agora exercitada com dados reais:244 transações normalizadas em rec
 O Excel privado contém o top-3, pontuação, proxies7d/30d, motivos, NÃO VERIFICADO e folhas com as análises profundas e tokens, incluindo análises que fiquem fora do top-3. A recuperação por `scripts/profit_export.py` usa uma base temporária e não altera a fotografia. Nenhum endereço foi acrescentado aos resumos públicos. Não houve notificações.
 
 A suite final tem **586 testes** e cobre os formatos das respostas reais através de fixtures anónimas, datas futuras do fornecedor, pacing entre famílias, Retry-After e recuperação do Excel. A contabilidade SOL, os cenários de custo conhecido e a classificação A foram validados com fixtures; **não foi confirmada rentabilidade FIFO SOL em nenhuma carteira real nesta entrega**. O ranking já não fica vazio por impossibilidade artificial de atingir a seleção estrita, mas os limites de evidência continuam explícitos.
+
+## Revisão de 02-11-2026: recolha completa, interpretação ainda parcial
+
+As alterações `b1efc4e` e `66fe4cd` foram publicadas apenas em
+`feat/profit-evidence-funnel`, sem merge. Acrescentam rotação persistente de
+candidatas, pedidos manuais cifrados, evidência de origem comprimida durante
+35 dias e interpretações versionadas, paginação profunda e recuperação limitada
+de inventário anterior. Parsed Events da Helius é usado como prova adicional;
+não substitui a reconciliação dos saldos. Os critérios financeiros mantêm-se.
+
+A [execução geral 41534727472](https://github.com/urbanz95/wallets/actions/runs/41534727472)
+terminou com sucesso. O período termina em 02-11-2026 às 22:09, Europe/Lisbon;
+a janela de seleção tem sete dias.
+
+| Estágio | Contagem | Birdeye tentado | Helius tentado |
+|---|---:|---:|---:|
+| Candidatas descobertas / após exclusões | 146 / 122 | 230 CU | 0 |
+| Respostas PnL 7d / pré-filtros favoráveis | 13 / 6 | 390 CU | 0 |
+| Consultas PnL 30d | 3 | 90 CU | 0 |
+| Análises profundas | 2 | 48 CU | 870 créditos |
+| Top-3 A / B / C | 0 / 2 / 1 | — | — |
+| Total | — | **758 CU** | **870 créditos** |
+
+Foram devolvidos 24 CU Birdeye e 850 créditos Helius reservados mas não
+utilizados. Os valores são contagens conservadoras locais de pedidos tentados,
+não um extrato de faturação. Nenhuma notificação foi enviada.
+
+Os dois históricos recentes ficaram paginados por completo: 1 615 e 38
+transações. Isso confirma a conclusão da paginação nesta janela e âmbito de
+consulta, não a cobertura de todo o inventário da carteira. A recuperação
+anterior da primeira análise atingiu 2 000 transações e permaneceu truncada.
+As duas análises observaram 50 e 8 tokens, respetivamente, mas **nenhuma produziu
+um token com resultado FIFO SOL suficientemente conhecido**. O top-3 B/B/C não
+constitui uma seleção de três carteiras confirmadas como lucrativas.
+
+A revisão local, sem novas consultas, identificou uma limitação de implementação:
+rotas com programas adicionais, instruções Pump ainda não suportadas e taxas
+pagas por terceiros continuam sem atribuição suficiente. As sete consultas
+Parsed Events forneceram 631 provas com `parserStatus=OK`, incluindo 248 resumos
+de swap. Um resumo de swap não basta para provar a participação da carteira,
+o custo líquido e todos os fluxos da transação. O verificador conservador
+mantém estes casos desconhecidos. A variante `get_fees` agora suportada não é
+a variante dominante desta amostra; a correção foi testada com fixtures, mas
+não resolveu a interpretação destas carteiras reais.
+
+O bloqueio atual não é ausência total de transações nas APIs gratuitas:
+**há dados reais recolhidos que o interpretador ainda não consegue reconciliar**.
+DexScreener não fornece a interpretação das transações ou o PnL das carteiras
+e não resolve esta lacuna. Não foi integrada. A evidência preservada permite
+validar futuras correções localmente, sem voltar a consumir quota de recolha.
+
+Histograma de verificações (ocorrências, não carteiras distintas):
+
+| Verificação | Reprovada | Indeterminada |
+|---|---:|---:|
+| Pré-filtro fornecedor 7d | 7 | 0 |
+| Persistência fornecedor 30d | 1 | 10 |
+| Cobertura profunda | 0 | 11 |
+| Proporção com custo conhecido | 2 | 11 |
+| Amostra SOL | 2 | 11 |
+| Custos SOL | 0 | 11 |
+| Resultado conservador, PF, concentração e remoção de vencedores | 0 cada | 13 cada |
+| Atividade recente, intensidade e horizonte | 0 cada | 13 cada |
+
+A [execução manual 41535174902](https://github.com/urbanz95/wallets/actions/runs/41535174902)
+consultou uma carteira introduzida por pedido cifrado: uma resposta PnL 7d,
+zero pré-filtros favoráveis, zero consultas 30d e zero análises profundas.
+O motivo foi `activity_over_daily_limit`; consumo de **30 CU Birdeye**,
+zero créditos Helius e zero notificações. Os contadores de descoberta são
+zero porque a descoberta foi desativada neste pedido, não porque a carteira
+ficou por consultar. O critério mede a média de operações por dia e não
+confirma automatização nem prejuízo. Os dados individuais ficam apenas no
+estado cifrado e no Excel privado.
+
+Os Excel privados separam agora o PnL total, realizado e não realizado
+**fornecido pela Birdeye**, para 7d e 30d. A consulta parcial preserva os
+valores agregados do fornecedor, mas não inventa PF, concentração ou taxa de
+sucesso quando faltam páginas por token. Não se apresentam esses valores como
+lucro líquido recalculado. A exportação foi repetida a partir dos snapshots
+imutáveis, sem rede e sem alterar a avaliação original.
+
+A suite passou **596 testes**. Os cenários de FIFO SOL reconciliado e de nível
+A continuam validados com fixtures; nesta revisão real não foi confirmada
+nenhuma carteira de nível A. Os secrets existentes foram suficientes e não
+é necessário configurar um terceiro fornecedor para reproduzir estes resultados.

@@ -46,6 +46,11 @@ METRICS = (
     ('tokens_count', 'Tokens distintos observados'),
     ('known_tokens_count', 'Tokens com contabilidade conhecida'),
 )
+PROVIDER_PNL_FIELDS = (
+    ('pnl_usd', 'PnL total fornecido pela Birdeye (USD)'),
+    ('realized_pnl_usd', 'PnL realizado fornecido pela Birdeye (USD)'),
+    ('unrealized_pnl_usd', 'PnL não realizado fornecido pela Birdeye (USD)'),
+)
 HEADERS = ('Posição', 'Pontuação', 'Nível de evidência', 'Carteira', 'Resultado da avaliação',
            'PnL fornecedor 7d (USD)', 'PnL fornecedor 30d (USD)') + tuple(label for _, label in METRICS) + (
            'Início (Lisboa)', 'Fim (Lisboa)', 'Recolha (Lisboa)', 'Histórico profundo completo',
@@ -309,7 +314,9 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
         for key, label in METRICS:
             metric_rows.append((index, 'FIFO em SOL / cenário conservador', label, _text(metrics.get(key))))
         for label, prefilter in (('Birdeye 7d — fornecido, não FIFO', pre7), ('Birdeye 30d — fornecido, não FIFO', pre30)):
-            for key in ('pnl_usd', 'tokens_count', 'win_rate', 'profit_factor', 'top1_share', 'top3_share', 'trade_count', 'trades_per_day', 'complete'):
+            for key, field_label in PROVIDER_PNL_FIELDS:
+                metric_rows.append((index, label, field_label, _text(prefilter.get(key))))
+            for key in ('tokens_count', 'win_rate', 'profit_factor', 'top1_share', 'top3_share', 'trade_count', 'trades_per_day', 'complete'):
                 metric_rows.append((index, label, key, _text(prefilter.get(key))))
     notes = [('Informação', 'Como interpretar'),
              ('Níveis A/B/C', 'A: cumpre os critérios verificáveis nesta avaliação; B: pré-filtro e análise profunda parcial; C: só pré-filtro. Nenhum nível é aprovação integral ou autorização Telegram.'),
@@ -331,11 +338,13 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
               ('Métricas', metric_rows, [12, 48, 54, 70]), ('Notas', notes, [30, 115])]
     extra=[]
     if assessed:
-        rows=[('Carteira','Pedido manual','PnL Birdeye 7d USD','PnL Birdeye 30d USD','Tokens 7d','Operações 7d','Pré-filtro favorável','Motivos')]
+        pnl_headers = tuple(f'{label} — {period}d' for period in (7, 30) for _, label in PROVIDER_PNL_FIELDS)
+        rows=[('Carteira','Pedido manual')+pnl_headers+('Tokens 7d','Operações 7d','Pré-filtro favorável','Motivos')]
         for candidate in assessed:
             pre=_map(candidate.get('prefilter7')); long=_map(candidate.get('prefilter30'))
-            rows.append([_text(v) for v in (candidate.get('wallet'),candidate.get('manual',False),pre.get('pnl_usd'),long.get('pnl_usd'),pre.get('tokens_count'),pre.get('trade_count'),pre.get('passed'),pre.get('reasons'))])
-        extra=[('Pré-filtros',rows,[58,20,30,30,20,25,28,80])]
+            pnl_values = tuple(source.get(key) for source in (pre, long) for key, _ in PROVIDER_PNL_FIELDS)
+            rows.append([_text(v) for v in (candidate.get('wallet'),candidate.get('manual',False))+pnl_values+(pre.get('tokens_count'),pre.get('trade_count'),pre.get('passed'),pre.get('reasons'))])
+        extra=[('Pré-filtros',rows,[58,20]+[40]*6+[20,25,28,80])]
     _xlsx(paths['xlsx'], sheets+_deep_sheets(assessed, ranking)+extra)
     anonymous_headers = [header for header in HEADERS if header != 'Carteira']
     with paths['csv'].open('w', encoding='utf-8-sig', newline='') as handle:

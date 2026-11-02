@@ -100,6 +100,27 @@ class ProfitReportingTests(unittest.TestCase):
             self.assertIn(TOKEN, archive.read('xl/worksheets/sheet2.xml').decode())
         self.assertEqual(stat.S_IMODE(result['xlsx'].stat().st_mode), 0o600)
 
+    def test_provider_total_realized_and_unrealized_are_distinct_in_private_excel(self):
+        value = candidate(deep={})
+        value['prefilter7'].update(pnl_usd=Decimal('120.75'),
+                                  realized_pnl_usd=Decimal('20.25'),
+                                  unrealized_pnl_usd=Decimal('100.50'))
+        result = write_profit_reports([value], telemetry(), self.root, assessed=[value])
+        metrics = {(row[1], row[2]): row[3] for row in self.sheet_rows(result['xlsx'], 2)[1:]}
+        prefilter_rows = self.sheet_rows(result['xlsx'], 4)
+        prefilter = dict(zip(prefilter_rows[0], prefilter_rows[1]))
+        expected = [('PnL total fornecido pela Birdeye (USD)', '120.75'),
+                    ('PnL realizado fornecido pela Birdeye (USD)', '20.25'),
+                    ('PnL não realizado fornecido pela Birdeye (USD)', '100.50')]
+        for label, amount in expected:
+            self.assertEqual(metrics[('Birdeye 7d — fornecido, não FIFO', label)], amount)
+            self.assertEqual(prefilter[label+' — 7d'], amount)
+            self.assertEqual(metrics[('Birdeye 30d — fornecido, não FIFO', label)], 'Por apurar')
+            self.assertEqual(prefilter[label+' — 30d'], 'Por apurar')
+        for key in ('csv', 'json', 'html'):
+            self.assertNotIn(WALLETS[0], result[key].read_text(encoding='utf-8-sig'))
+        self.assertEqual(result['public_summary']['telegram_sent'], 0)
+
     def test_identity_is_only_in_excel_not_other_reports_or_public_summary(self):
         data = [candidate(0),candidate(1),candidate(2)]
         result = write_profit_reports(data, telemetry(), self.root)
