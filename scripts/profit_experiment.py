@@ -111,6 +111,9 @@ def run_experiment(production, experiment, output, config, production_vault, exp
                 from wallets.profit_pipeline import run_pipeline
                 pipeline = run_pipeline
             checkpoint = lambda: experiment_vault.save(experiment)
+            from wallets.profit_request import accept_request
+            if accept_request(store,os.environ.get('STATE_ENCRYPTION_KEY',''),os.environ.get('PRIVATE_WALLET_REQUEST',''),now):
+                checkpoint()
             try:
                 result = pipeline(store, config, budget, checkpoint, str(output), now=now)
             finally:

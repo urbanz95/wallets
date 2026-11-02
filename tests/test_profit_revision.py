@@ -126,3 +126,17 @@ class RevisionTests(unittest.TestCase):
             self.assertNotIn('private-key',str(exc.exception));self.assertTrue(client._halted)
 
 if __name__=='__main__':unittest.main()
+
+class PrivateRequestTests(unittest.TestCase):
+    def test_private_ticket_expiry_authentication_and_replay(self):
+        from cryptography.fernet import Fernet
+        from wallets.profit_request import encode_request,accept_request
+        key=Fernet.generate_key();wallet='A'*44
+        ticket=encode_request(key,wallet,END)
+        self.assertNotIn(wallet,ticket)
+        with TemporaryDirectory() as d,Store(Path(d)/'state.db') as store:
+            self.assertTrue(accept_request(store,key,ticket,END))
+            self.assertFalse(accept_request(store,key,ticket,END))
+            with self.assertRaises(ValueError):accept_request(store,Fernet.generate_key(),ticket,END)
+            with self.assertRaises(ValueError):accept_request(store,key,ticket,END+timedelta(days=1))
+            with self.assertRaises(ValueError):accept_request(store,key,ticket,END-timedelta(hours=1))

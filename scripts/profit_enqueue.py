@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
-"""Adicionar pedido privado ao cofre; nunca pôr endereços no formulário Actions."""
+"""Iniciar avaliação manual com pedido cifrado, sem permissões locais de upload."""
 from getpass import getpass,GetPassWarning
 import warnings
 import os
-from pathlib import Path
-from tempfile import TemporaryDirectory
+import json
+import subprocess
 from wallets.models import utcnow
-from wallets.storage import Store
-from wallets.collection import valid_address
-from wallets.profit_queue import enqueue
-from profit_experiment import ExperimentGitHub,EXPERIMENT_MAX_STATE_BYTES
-from state_vault import Vault
+from wallets.profit_request import encode_request
 
 
-def enqueue_private(vault,wallet):
-    if not valid_address(wallet):raise ValueError('Endereço inválido')
-    with TemporaryDirectory(prefix='wallets-request-') as directory:
-        db=Path(directory)/'private.sqlite'
-        vault.restore(db)
-        with Store(db) as store:
-            enqueue(store,[{'wallet':wallet,'origins':[],'discovery':{'source':'manual'}}],utcnow(),manual=True)
-        vault.save(db)  # Recusa estado remoto que tenha avançado; nunca sobrepõe gerações.
+def dispatch_private(key,wallet):
+    ticket=encode_request(key,wallet,utcnow())
+    payload={'manual_only':'true','wallet':'','notify':'false',
+             'initialize_state':'false','probe_only':'false','probe_contracts':'false',
+             'validate_only':'false','probe_wallet_access':'false','private_request':ticket}
+    result=subprocess.run(['gh','workflow','run','daily.yml','--repo','urbanz95/wallets',
+         '--ref','feat/profit-evidence-funnel','--json'],input=json.dumps(payload),text=True,capture_output=True)
+    if result.returncode:raise ValueError('GitHub recusou o arranque do pedido privado')
 
 
 def main():
@@ -28,10 +24,10 @@ def main():
         warnings.simplefilter('error',GetPassWarning)
         key=os.environ.get('STATE_ENCRYPTION_KEY') or getpass('Chave de recuperação (oculta): ')
         wallet=getpass('Endereço a analisar (oculto): ').strip()
-        enqueue_private(Vault(key,ExperimentGitHub(),compress_snapshot=True,max_state_bytes=EXPERIMENT_MAX_STATE_BYTES),wallet)
+        dispatch_private(key,wallet)
     except Exception:
-        print('Não foi possível guardar o pedido privado. Confirme a chave/acesso e ausência de execução concorrente.');return 1
-    print('Pedido guardado no estado cifrado. Executar manual_only no branch experimental.');return 0
+        print('Não foi possível iniciar a análise privada. Confirme a chave e o acesso GitHub.');return 1
+    print('Análise privada iniciada no branch experimental.');return 0
 
 
 if __name__=='__main__':raise SystemExit(main())

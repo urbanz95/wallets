@@ -3,6 +3,9 @@ name: Experiência por lucro — branch sem Telegram
 on:
   workflow_dispatch:
     inputs:
+      private_request:
+        type: string
+        default: ''
       # Compatibilidade com o formulário do workflow registado na main.
       # Nunca encaminhar wallet/notify para comandos, logs ou notificações.
       initialize_state:
@@ -43,6 +46,7 @@ jobs:
   experiment:
     uses: ./.github/workflows/profit.yml
     with:
+      private_request: ${{ inputs.private_request }}
       manual_only: ${{ inputs.manual_only }}
       probe_wallet_access: ${{ inputs.probe_wallet_access || inputs.probe_only || inputs.probe_contracts }}
       validate_only: ${{ inputs.validate_only || inputs.initialize_state }}
