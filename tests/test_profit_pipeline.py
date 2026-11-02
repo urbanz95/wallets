@@ -26,7 +26,7 @@ class Budget:
 
 class ProfitPipelineTests(unittest.TestCase):
     def test_prefilter_then_persistence_then_only_best_deep_and_private_top3(self):
-        candidates=[{'wallet':wallet,'origins':[],'discovery':{}} for wallet in (WALLET,'B'*44,'C'*44,'D'*44)]
+        candidates=[{'wallet':wallet,'origins':[],'discovery':{}} for wallet in ('A'*44,'B'*44,'C'*44,'D'*44)]
         calls=[]
         def prefilter(client,wallet,days,config,now):
             calls.append((wallet,days))
@@ -73,7 +73,7 @@ class ProfitPipelineTests(unittest.TestCase):
         a={'wallet':'a','origins':[],'prefilter7':{'passed':True,'pnl_usd':999999,'tokens_count':1,'profit_factor':.5,'top3_share':1}}
         b={'wallet':'b','origins':[],'prefilter7':{'passed':True,'pnl_usd':100,'tokens_count':40,'profit_factor':2,'top3_share':.4}}
         c={'wallet':'c','origins':['x','y'],'prefilter7':{'passed':True,'pnl_usd':50}}
-        self.assertEqual([r['wallet'] for r in sorted([a,b,c],key=_provider_order)],['c','b','a'])
+        self.assertEqual([r['wallet'] for r in sorted([a,b,c],key=_provider_order)],['b','c','a'])
 
     def test_family_circuits_propagate_auth_but_preserve_global_budgets_after_429(self):
         from types import SimpleNamespace

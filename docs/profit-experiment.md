@@ -80,3 +80,11 @@ O workflow da main e o experimental partilham o nome registado em Actions, mas t
 Neste branch `notify` e `wallet` são ignorados; não são enviados para comandos nem aparecem nos logs. `initialize_state` faz apenas validação sem quota e nunca reinicializa um cofre. `probe_only` e `probe_contracts` fazem somente a sondagem de um pedido Wallet API, até30CU; não executam a análise completa. Com todas as opções desmarcadas e wallet vazio, executa-se a experiência normal.
 
 `validate_only` permite confirmar instalação, testes e arranque do workflow sem receber credenciais de mercado, consultar fornecedores, restaurar/gravar cofres ou enviar Telegram. É também usado para validar a compatibilidade do formulário sem gastar quota. Uma rejeição do formulário pode não criar uma execução; nesse caso, a mensagem apresentada pelo GitHub permite confirmar a causa. Falhas antigas continuam visíveis no histórico, mesmo depois da correção.
+
+## Correções de 02-11-2026 e carteiras introduzidas manualmente
+
+O perfil passa a completar mais páginas, guardar a origem comprimida para novas interpretações e rodar candidatas em fila privada. O Excel inclui a folha **Pré-filtros** com todas as carteiras consultadas, mesmo fora do top-3. O resumo público separa motivos de reprovação e falta de dados.
+
+Para pedir uma carteira sem a publicar, executar localmente `PYTHONPATH=src:scripts python scripts/profit_enqueue.py`: pede a chave e o endereço com entrada oculta e acrescenta apenas um pedido ao cofre cifrado existente. Depois executar o workflow no branch `feat/profit-evidence-funnel`. `manual_only=true` permite consultar só os pedidos privados; deixar falso inclui a descoberta normal. Nunca colocar endereços na descrição do workflow ou no campo legado `wallet`. Não são necessários novos secrets. Evitar enfileirar durante outra execução; a proteção do cofre recusa um estado remoto mais recente em vez de o sobrescrever.
+
+Parsed Events e o backfill não garantem que uma carteira passe. No Excel, um resultado Birdeye favorável continua a ser uma métrica do fornecedor; rentabilidade própria e acompanhamento exigem as restantes provas. A main e a política Telegram não foram alteradas.

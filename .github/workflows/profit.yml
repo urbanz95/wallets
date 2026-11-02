@@ -5,12 +5,18 @@ on:
       validate_only:
         type: boolean
         default: false
+      manual_only:
+        type: boolean
+        default: false
       probe_wallet_access:
         type: boolean
         default: false
   workflow_call:
     inputs:
       validate_only:
+        type: boolean
+        default: false
+      manual_only:
         type: boolean
         default: false
       probe_wallet_access:
@@ -66,10 +72,12 @@ jobs:
         env:
           BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          MANUAL_ONLY: ${{ inputs.manual_only }}
           PROBE_WALLET_ACCESS: ${{ inputs.probe_wallet_access }}
         shell: bash
         run: |
           args=()
+          if [ "$MANUAL_ONLY" = "true" ]; then args+=(--manual-only); fi
           if [ "$PROBE_WALLET_ACCESS" = "true" ]; then args+=(--probe-wallet-access); fi
           python scripts/profit_experiment.py --production-db state/production.sqlite --db state/profit.sqlite --output reports/profit --config config.profit.toml "${args[@]}"
 

@@ -21,6 +21,8 @@ from .profit_ranking import rank_candidates
 from .profit_reporting import write_profit_reports
 from .profit_persistence import ensure_schema, load_receipts, save_receipts_and_prune, save_run
 from .sol_accounting import analyze_sol
+from . import profit_queue
+from .profit_deep import evaluate as evaluate_deep
 
 ZERO = Decimal(0)
 
@@ -41,8 +43,9 @@ def _provider_order(candidate):
     # Qualidade mensurável antes do montante: não premiar só um grande vencedor.
     quality=(int(pf is not None and pf >= Decimal('1.3'))
              +int(top3 is not None and top3 <= Decimal('.65')))
-    return (not pref.get('passed',False),-len(set(candidate.get('origins',[]))),
-            -quality,-min(tokens or ZERO,Decimal(40)),-(amount or ZERO))
+    return (not candidate.get('manual',False), not pref.get('passed',False),
+            not (tokens is not None and tokens>=40),-quality,
+            -len(set(candidate.get('origins',[]))),-min(tokens or ZERO,Decimal(40)),-(amount or ZERO))
 
 
 def _family_client(store, api_config, previous):
@@ -137,8 +140,9 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     helius=HeliusClient(os.environ.get('HELIUS_API_KEY',''),store,config['helius'])
     clients={'birdeye':bird,'helius':helius}
     histogram=Counter();counts={'candidates':0,'pre_filter':0,'pnl_details':0,'pnl_responses':0,'prefilter_passed':0,'persistence':0,'deep':0,'top3':0}
-    with budget.stage('discovery',birdeye=int(settings.get('discovery_budget',230)),store=store,clients=clients):
-        found=discover(bird,store,config,now)
+    manual_only=settings.get('manual_only',False)
+    with budget.stage('discovery',birdeye=0 if manual_only else int(settings.get('discovery_budget',230)),store=store,clients=clients):
+        found={'candidates':[],'rejections':[],'errors':[]} if manual_only else discover(bird,store,config,now)
     candidates=found['candidates']
     counts['candidates']=len(candidates)+len(found.get('rejections',[]))
     counts['pre_filter']=len(candidates)
@@ -152,7 +156,11 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     bird=_family_client(store,config['api'],[discovery_client])
     clients={'birdeye':bird,'helius':helius}
     assessed=[]
-    pre_candidates=candidates[:int(settings.get('max_prefilters',7))]
+    pre_candidates=profit_queue.select(store,candidates,now,int(settings.get('max_prefilters',7)))
+    if manual_only:pre_candidates=[c for c in pre_candidates if c.get('manual')]
+    excluded={c.get('wallet') for c in found.get('rejections',[])}
+    pre_candidates=[c for c in pre_candidates if c['wallet'] not in excluded]
+    checkpoint()
     pnl_page_cost=30*max(1,int(settings.get('prefilter_max_pages',1)))
     with budget.stage('prefilter',birdeye=min(int(settings.get('prefilter_budget',210)),len(pre_candidates)*pnl_page_cost),store=store,clients=clients):
         for candidate in pre_candidates:
@@ -173,7 +181,10 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     bird=_family_client(store,config['api'],[discovery_client,wallet_client])
     clients={'birdeye':bird,'helius':helius}
     with budget.stage('deep',birdeye=min(int(settings.get('deep_budget',270)),len(deep_candidates)*12*int(settings.get('deep_birdeye_pages',3))),
-                      helius=min(int(settings.get('helius_deep_budget',200)),len(deep_candidates)*100),store=store,clients=clients):
+                      helius=min(int(settings.get('helius_deep_budget',200)),len(deep_candidates)*(
+                          100*int(config.get('helius',{}).get('max_pages',1))
+                          +100*int(settings.get('opening_max_pages',0))
+                          +10*int(settings.get('parsed_max_batches',0)))),store=store,clients=clients):
         history=HeliusHistory(helius,store,config)
         for candidate in deep_candidates:
             wallet=candidate['wallet'];counts['deep']+=1
@@ -181,16 +192,9 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
                   'metrics':{},'reasons':[],'currency':'SOL'}
             try:
                 evidence,bird_scope=_birdeye_trade_evidence(bird,wallet,start,now,settings.get('deep_birdeye_pages',3))
-                captured=history.history(wallet,start,now,token_accounts=True)
-                raw=[row for row in captured['transactions'] if start<=parse_time(row['blockTime'])<now]
-                previous=load_receipts(store,wallet,start,now)
-                # Só contabilizar cada assinatura uma vez; dados completos novos
-                # substituem a representação normalizada da mesma transação.
-                fresh_ids={(row.get('transaction') or {}).get('signatures',[None])[0] for row in raw}
-                previous=[row for row in previous if row.get('signature') not in fresh_ids]
-                result=analyze_sol(previous+raw,wallet,start,now,candidate.get('origins',[]),birdeye_events=evidence)
-                stats=save_receipts_and_prune(store,wallet,result['receipts'],raw,start,now,
-                    metadata={'pages_complete':captured.get('pages_complete'), 'truncated':captured.get('truncated')})
+                result,captured,stats,failures=evaluate_deep(store,helius,config,wallet,start,now,evidence,
+                    candidate.get('origins',[]),checkpoint,history_factory=HeliusHistory)
+                deep['history_failures']=failures
                 deep.update(metrics=result['metrics'],tokens=result['tokens'],receipt_counts=stats,
                     complete=bool(captured.get('pages_complete') and not captured.get('truncated') and not captured.get('failures')),
                     coverage=dict(result['coverage'],start=start,end=now,source='helius',pages_complete=captured.get('pages_complete')),
@@ -202,15 +206,20 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
             candidate['deep']=deep
             histogram.update(_codes(deep['reasons']))
             checkpoint()
+    for candidate in assessed:profit_queue.checked(store,candidate,now)
     evaluated_at=utcnow()
     ranked=rank_candidates(assessed,config,evaluated_at);counts['top3']=len(ranked)
+    check_statuses={'failed':Counter(),'unknown':Counter()}
     # Histograma de toda a amostra consultada, não apenas dos três primeiros.
     for candidate in assessed:
         for row in rank_candidates([candidate],config,evaluated_at):
             histogram.update(_codes(row.get('reason_codes',[])))
+            for check in row.get('ranking_checks',[]):
+                if check['status']=='REPROVADA':check_statuses['failed'][check['name']]+=1
+                elif check['status']=='INDETERMINADA':check_statuses['unknown'][check['name']]+=1
     levels=Counter(row.get('evidence_level','C') for row in ranked)
     telemetry={'started_at':now,'stages':counts,'budget':budget.stats,
-               'rejections':dict(histogram),'ranking_levels':dict(levels)}
+               'rejections':dict(histogram),'check_statuses':{k:dict(v) for k,v in check_statuses.items()},'ranking_levels':dict(levels)}
     save_run(store,{'profile':settings.get('version',config['criteria_version']),'criteria':config,
                     'started_at':now,'finished_at':utcnow(),'candidates':assessed,'discovery_errors':found.get('errors',[]),
                     'ranking':ranked,'telemetry':telemetry})

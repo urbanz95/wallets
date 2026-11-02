@@ -200,7 +200,7 @@ class ProfitReportingTests(unittest.TestCase):
         with ZipFile(result['xlsx']) as archive:
             workbook = ET.fromstring(archive.read('xl/workbook.xml'))
             self.assertEqual([sheet.attrib['name'] for sheet in workbook.find('s:sheets', NS)],
-                             ['Ranking','Métricas','Notas','Análises profundas','Tokens analisados'])
+                             ['Ranking','Métricas','Notas','Análises profundas','Tokens analisados','Pré-filtros'])
         self.assertEqual(len(self.sheet_rows(result['xlsx'], 1)), 4)
         overview = self.sheet_rows(result['xlsx'], 4)
         self.assertEqual(len(overview), 2)

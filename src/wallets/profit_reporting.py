@@ -129,6 +129,8 @@ def public_summary(telemetry, ranking=()):
               'budget': _budget_counts(_map(telemetry.get('budget'))),
               'rejections': dict(sorted(histogram.items())), 'ranking_levels': levels,
               'telegram_sent': 0}
+    result['check_statuses']={kind:{name:count for name,count in _map(_map(telemetry.get('check_statuses')).get(kind)).items()
+        if PUBLIC_REASON.fullmatch(name) and type(count) is int and count>=0} for kind in ('failed','unknown')}
     try:
         result['started_at'] = parse_time(telemetry['started_at']).isoformat()
     except (KeyError, ValueError, TypeError, OverflowError):
@@ -327,7 +329,14 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
         ('json', 'ranking_anonimo.json'), ('html', 'ranking_anonimo.html'))}
     sheets = [('Ranking', excel_rows, [12, 15, 18, 58]+[30]*(len(HEADERS)-4)),
               ('Métricas', metric_rows, [12, 48, 54, 70]), ('Notas', notes, [30, 115])]
-    _xlsx(paths['xlsx'], sheets+_deep_sheets(assessed, ranking))
+    extra=[]
+    if assessed:
+        rows=[('Carteira','Pedido manual','PnL Birdeye 7d USD','PnL Birdeye 30d USD','Tokens 7d','Operações 7d','Pré-filtro favorável','Motivos')]
+        for candidate in assessed:
+            pre=_map(candidate.get('prefilter7')); long=_map(candidate.get('prefilter30'))
+            rows.append([_text(v) for v in (candidate.get('wallet'),candidate.get('manual',False),pre.get('pnl_usd'),long.get('pnl_usd'),pre.get('tokens_count'),pre.get('trade_count'),pre.get('passed'),pre.get('reasons'))])
+        extra=[('Pré-filtros',rows,[58,20,30,30,20,25,28,80])]
+    _xlsx(paths['xlsx'], sheets+_deep_sheets(assessed, ranking)+extra)
     anonymous_headers = [header for header in HEADERS if header != 'Carteira']
     with paths['csv'].open('w', encoding='utf-8-sig', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=anonymous_headers, delimiter=';')

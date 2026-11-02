@@ -120,6 +120,8 @@ class HeliusHistory:
         key = self.cursor_key(address, ascending, token_accounts)
         if self.config.get('recent', {}).get('enabled', False):
             key += ':recent-7d'  # não retomar cursores legados ancorados em EPOCH
+        namespace=self.settings.get('history_namespace')
+        if namespace: key += ':'+str(namespace)
         failures, queried_windows, pages = [], [], 0
         try:
             state = self._state(key)

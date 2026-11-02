@@ -15,10 +15,10 @@ from hashlib import sha256
 from statistics import median
 
 from .analysis import SETTLEMENT_TOKENS
-from .models import SOL, dumps, iso, parse_time
+from .models import SOL, Event, dumps, iso, parse_time
 from .helius_normalization import (
     normalize_transaction, _account_keys, _balance_records, _instructions,
-    _parsed, _integer, _quantity, _trade_interference, AUXILIARY_PROGRAMS,
+    _parsed, _integer, _quantity, _trade_interference, _data, AUXILIARY_PROGRAMS,
     SYSTEM_PROGRAM, TOKEN_PROGRAMS, ATA_PROGRAM,
 )
 
@@ -220,7 +220,50 @@ def _correlated_swap(row, wallet, parsed, birdeye_events):
     return event, amount, components, matches
 
 
-def normalize_sol_receipt(row, wallet, *, birdeye_events=()):
+def _parsed_swap(row,wallet,normalized,proof):
+    """Corroborar uma única chamada com Parsed Events e saldos RPC exatos.
+
+    Não usa montantes de venue como montantes líquidos nem interpreta o resumo
+    textual. CPI/rotas ambíguas, patrocinadores e fluxos externos ficam UNKNOWN.
+    """
+    if not isinstance(proof,dict) or proof.get('parserStatus')!='OK':return None
+    data=proof.get('parsed',{}); evidence=normalized['evidence']
+    if (evidence.get('execution_status')!='succeeded' or proof.get('signature')!=evidence['signature'] or data.get('slot')!=evidence['slot']
+            or data.get('blockTime')!=row['blockTime'] or data.get('fee')!=row['meta'].get('fee')
+            or data.get('feePayer')!=wallet or data.get('transactionStatus')!='OK'):return None
+    summary=data.get('summary') or {}; detail=summary.get('parsedData') or {}
+    if summary.get('type')!='swap' or detail.get('type')!='swap':return None
+    a,b=detail.get('input_mint'),detail.get('output_mint')
+    if (a==SOL)==(b==SOL):return None
+    base=b if a==SOL else a; kind='buy' if a==SOL else 'sell'
+    if base in SETTLEMENT_TOKENS or not isinstance(base,str):return None
+    keys=_account_keys(row['transaction']['message'],row['meta'])
+    accounts,deltas,decimals,complete=_balance_records(row['meta'],keys,wallet,[])
+    instructions,decoded=_instructions(row['transaction']['message'],row['meta'],keys)
+    roots=[i for i in instructions if i['top_level'] and i['program'] not in AUXILIARY_PROGRAMS]
+    if not complete or not decoded or len(roots)!=1 or any(v and t not in (base,SOL) for t,v in deltas.items()):return None
+    root=roots[0]
+    match=[i for i in data.get('instructions',[]) if i.get('instructionIndex')==root['index']
+           and i.get('innerInstructionIndex') is None and i.get('programId')==root['program']]
+    if len(match)!=1 or (match[0].get('summary') or {}).get('type')!='swap':return None
+    if match[0].get('rawAccounts')!=root['accounts'] or _data(match[0].get('rawData'))!=root['data']:return None
+    named=(match[0].get('decoded') or {}).get('accounts',[])
+    if not any(i.get('pubkey')==wallet and i.get('name') in ('user','owner','authority','trader','user_transfer_authority') for i in named):return None
+    raw=deltas.get(base,0)
+    if not raw or (raw>0)!=(kind=='buy'):return None
+    states=[i for i in accounts.values() if i['owner']==wallet and i['mint']==base and i['delta_raw']]
+    if len(states)!=1 or states[0]['delta_raw']!=raw:return None
+    swap={'program':root['program'],'instruction_index':root['index'],'top_level':True,
+          'mint':base,'quote_mint':SOL,'kind':kind,'base_account':states[0]['account']}
+    if _trade_interference(instructions,swap):return None
+    amount,components,reasons=_sol_counterparty(row,wallet,normalized,swap)
+    if amount is None or reasons:return None
+    event=Event('parsed:'+proof['signature'],wallet,base,evidence['block_time'],kind,
+                _quantity(abs(raw),decimals[base]),tx_hash=proof['signature'],source='helius')
+    return event,amount,components
+
+
+def normalize_sol_receipt(row, wallet, *, birdeye_events=(), parsed_events=None):
     """Normalizar uma transação real para prova mínima e pernas contabilizáveis."""
     if isinstance(row, dict) and row.get('schema') == SCHEMA:
         return _validate_receipt(row, wallet)
@@ -239,7 +282,8 @@ def normalize_sol_receipt(row, wallet, *, birdeye_events=()):
                'programs': evidence.get('programs', []),
                'status': 'unknown', 'fee_sol': fee, 'fee_attributed_to_wallet': attributed,
                'sol_quote_verified': False, 'classification_complete': False,
-               'legs': [], 'reasons': [], 'components': {}}
+               'legs': [], 'reasons': list(parsed.get('limitations',[])), 'components': {},
+               'interpreter_version':'2026-11-02.sol.2'}
     if evidence.get('execution_status') == 'failed':
         receipt['status'] = 'failed'; receipt['classification_complete'] = True
         return receipt
@@ -281,6 +325,16 @@ def normalize_sol_receipt(row, wallet, *, birdeye_events=()):
                 'balance_before':token_balances[event.token][0],
                 'balance_after':token_balances[event.token][1]}]
             return receipt
+    correlated = _parsed_swap(row,wallet,parsed,(parsed_events or {}).get(signature))
+    if correlated is not None and fee is not None:
+        event,cost,components=correlated
+        receipt.update(status='trade',sol_quote_verified=True,classification_complete=True,
+                       components=components,classification='helius_parsed_rpc_reconciled',
+                       parsed_proof_hash=sha256(dumps(parsed_events[signature]).encode()).hexdigest())
+        receipt['legs']=[{'token':event.token,'kind':event.kind,'quantity':event.quantity,
+            'value_sol':cost,'fee_sol':fee,'reason':'',
+            'balance_before':token_balances[event.token][0],'balance_after':token_balances[event.token][1]}]
+        return receipt
     nonsettlement = [e for e in parsed['events'] if e.token not in SETTLEMENT_TOKENS]
     if nonsettlement:
         for event in nonsettlement:
@@ -372,7 +426,7 @@ def _consume(lots, quantity):
     return cost, unknown or remaining > ZERO, holds
 
 
-def analyze_sol(transactions, wallet, start, end, discovery_tokens=(), marks_sol=None, *, birdeye_events=()):
+def analyze_sol(transactions, wallet, start, end, discovery_tokens=(), marks_sol=None, *, birdeye_events=(), parsed_events=None, opening_transactions=(), opening_start=None):
     """Resultados em SOL do universo observado, incluindo abertos no pior caso.
 
     ``worst_case_sol`` é um subtotal dos tokens de custo conhecido, após taxas
@@ -385,14 +439,21 @@ def analyze_sol(transactions, wallet, start, end, discovery_tokens=(), marks_sol
         raise ValueError('Janela contabilística SOL inválida')
     with localcontext() as context:
         context.prec = 80
-        return _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol or {}, birdeye_events)
+        opening={}
+        if opening_transactions:
+            if opening_start is None or parse_time(opening_start)>=start:raise ValueError('Início de inventário inválido')
+            history=_analyze(opening_transactions,wallet,parse_time(opening_start),start,(),{},birdeye_events,parsed_events or {},{})
+            # Só inventário demonstrado: um backfill parcial nunca é passado aqui.
+            for token in history['tokens']:
+                if token['known_cost']:opening[token['token']]=history['_closing_lots'][token['token']]
+        return _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol or {}, birdeye_events,parsed_events or {},opening)
 
 
-def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, birdeye_events):
+def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, birdeye_events, parsed_events, opening):
     unique = {}; invalid = outside = duplicate = 0
     for row in transactions:
         try:
-            receipt = normalize_sol_receipt(row, wallet, birdeye_events=birdeye_events)
+            receipt = normalize_sol_receipt(row, wallet, birdeye_events=birdeye_events, parsed_events=parsed_events)
         except (ValueError, TypeError, KeyError, ArithmeticError, OverflowError):
             receipt = _unknown_receipt(row, wallet, 'Transação sem normalização SOL verificável.')
         stamp = receipt['timestamp']
@@ -443,9 +504,12 @@ def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, bird
                 trades.append((receipt, leg));assigned += leg['fee_sol']
         overhead = max(ZERO,(receipt['fee_sol'] or ZERO)-assigned)
         unallocated_fees += overhead;daily[bucket(stamp)] -= overhead
-    token_rows = []; outcomes = {}; returns = []; all_holds = []; entries = []
+    active_tokens=set(grouped)
+    for token in opening:grouped.setdefault(token,[])
+    token_rows = []; outcomes = {}; returns = []; all_holds = []; entries = []; closing_lots = {}
     for token, operations in sorted(grouped.items()):
-        lots = deque(); reasons = []; realized = ZERO; bought_cost = ZERO; sold_cost = ZERO
+        lots = deque(dict(lot) for lot in opening.get(token,[])); reasons = []; realized = ZERO
+        bought_cost = sum((lot['cost'] for lot in lots),ZERO); sold_cost = ZERO
         token_daily = defaultdict(lambda:ZERO); token_holds = []; token_entries = []
         # Slots e índices permitem ordenar operações no mesmo segundo. Se a
         # ordem económica continua ambígua, não usar ordem lexical como prova.
@@ -488,6 +552,7 @@ def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, bird
                 _consume(lots,quantity);reasons.append('Transferência enviada não é venda; fluxo de aquisição/saída por reconciliar.')
             else:
                 reasons.append(leg.get('reason') or 'Operação não interpretada em SOL.')
+        closing_lots[token]=[dict(lot) for lot in lots]
         remaining = sum((lot['quantity'] for lot in lots),ZERO)
         remaining_cost = None if any(lot['cost'] is None for lot in lots) else sum((lot['cost'] for lot in lots),ZERO)
         known = not reasons and bought_cost>ZERO and remaining_cost is not None
@@ -527,7 +592,8 @@ def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, bird
     active={bucket(r['timestamp']) for r,leg in trades}
     rapid=sum(value<=60 for value in all_holds)
     metrics={
-        'currency':'SOL','tokens_count':len(token_rows),'known_tokens_count':known,'unknown_tokens_count':unknown,
+        'currency':'SOL','tokens_count':len(token_rows),'known_tokens_count':sum(t in active_tokens for t in outcomes),'unknown_tokens_count':unknown,
+        'known_risk_tokens_count':known,'initial_only_tokens_count':sum(t not in active_tokens for t in outcomes),
         'closed_tokens_count':sum(row['closed'] for row in token_rows),
         'open_tokens_count':sum(row['known_cost'] and not row['closed'] for row in token_rows),
         'unknown_cost_fraction':Decimal(unknown)/Decimal(len(token_rows)) if token_rows else None,
@@ -564,7 +630,7 @@ def _analyze(transactions, wallet, start, end, discovery_tokens, marks_sol, bird
         'profit_factor_definition':'Ganhos por token no pior caso / (perdas por token no pior caso + taxas SOL identificadas não atribuídas a swaps).',
         'daily_definition':'Blocos não sobrepostos de24h ancorados no início; custo aberto perdido no bloco final é cenário, não venda real.',
     }
-    return {'currency':'SOL','tokens':token_rows,'metrics':metrics,'receipts':receipts,
+    return {'currency':'SOL','tokens':token_rows,'metrics':metrics,'receipts':receipts,'_closing_lots':closing_lots,
             'limitations':list(LIMITATIONS),
             'coverage':{'input_count':len(receipts)+duplicate,'receipt_count':len(receipts),
                         'duplicate_count':duplicate,'invalid_count':invalid,'outside_window_count':outside,

@@ -29,6 +29,10 @@ on:
         description: 'Só instalação e testes; sem consultas, quota, cofres ou Telegram'
         type: boolean
         default: false
+      manual_only:
+        description: 'Analisar apenas pedidos privados enfileirados; sem endereços no formulário'
+        type: boolean
+        default: false
       probe_wallet_access:
         description: 'Sondagem: só um pedido à API de carteiras (30 CU), sem Telegram'
         type: boolean
@@ -39,6 +43,7 @@ jobs:
   experiment:
     uses: ./.github/workflows/profit.yml
     with:
+      manual_only: ${{ inputs.manual_only }}
       probe_wallet_access: ${{ inputs.probe_wallet_access || inputs.probe_only || inputs.probe_contracts }}
       validate_only: ${{ inputs.validate_only || inputs.initialize_state }}
     secrets:

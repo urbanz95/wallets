@@ -67,3 +67,9 @@ Para descobrir os primeiros compradores de um token, consultar apenas o mint pod
 - Corpos, mensagens remotas e URLs autenticados não são apresentados em exceções, logs ou relatórios. Os únicos dados de autenticação necessários são guardados como GitHub Actions Secrets.
 
 Cada uma das oito verificações obrigatórias mantém o seu papel. Acrescentar Helius melhora a evidência disponível, mas **não transforma cobertura desconhecida em aprovação**. Fixtures/mocks verificam o código e os bloqueios; a confirmação de acesso real acima é separada e também não valida rentabilidade de carteiras reais.
+
+## Revisão 02-11-2026: Parsed Events e taxas Pump
+
+Documentação oficial consultada: [Parsed Events](https://www.helius.dev/docs/parsed-events), [contrato](https://www.helius.dev/docs/parsed-events/quickstart), [resposta](https://www.helius.dev/docs/parsed-events/parsed-response), [créditos](https://www.helius.dev/docs/billing/credits). Disponível em Free,10 créditos/pedido, sem upgrade. Implementado apenas POST `/v1/parsed-events/transactions`, máximo100 assinaturas/batch e `rawTransaction=jsonParsed`. Não tem paginação própria: assinaturas provêm do histórico paginado. A resposta exige correspondência de assinaturas; `parserStatus=ERROR` não é transação interpretada. JSON bruto é opcional e validado quando devolvido. Não foi adicionado outro fornecedor. Limite do cliente:1pedido/s, sem retentativas automáticas deste endpoint;403/429 interrompem acesso. A cobertura dos protocolos depende do catálogo IDL; os montantes `parsedData` podem excluir taxas Token-2022 e exigem reconciliação com saldos.
+
+Contrato Pump oficial: [pump_fees.json](https://github.com/pump-fun/pump-public-docs/blob/main/idl/pump_fees.json) e [guia](https://github.com/pump-fun/pump-public-docs/blob/main/docs/FEE_PROGRAM_README.md). Só `get_fees` validado é reconhecido como consulta auxiliar dentro de um swap identificado. A presença do programa por si só não valida uma operação.

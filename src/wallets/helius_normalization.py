@@ -23,6 +23,8 @@ from .models import Event, SOL, dumps, parse_time
 
 PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
 PUMP_AMM_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
+PUMP_FEE_PROGRAM = 'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ'
+PUMP_GET_FEES = bytes([231,37,126,85,207,91,63,52])
 SYSTEM_PROGRAM = '11111111111111111111111111111111'
 TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
@@ -403,6 +405,31 @@ def _matched_usd(event, swap_evidence):
     return value
 
 
+def _verified_fee_reads(instructions):
+    """Só get_fees read-only, CPI de uma chamada Pump, com IDL e contas coerentes.
+
+    O programa não se torna auxiliar global. Claims/admin/novos discriminadores
+    continuam bloqueados. O preço vem dos saldos, nunca dos argumentos de taxas.
+    """
+    calls = [i for i in instructions if i['program'] == PUMP_FEE_PROGRAM]
+    if not calls:
+        return False
+    for call in calls:
+        data, accounts = call['data'], call['accounts']
+        # IDL atual OptionBool é um bool (um byte); versão anterior sem esse campo.
+        if (call['top_level'] or not isinstance(data, bytes) or len(data) not in (33,34)
+                or data[:8] != PUMP_GET_FEES or data[8] not in (0,1)
+                or (len(data)==34 and data[-1] not in (0,1)) or len(accounts)!=2):
+            return False
+        roots = [i for i in instructions if i['top_level'] and i['index']==call['index']
+                 and i['program'] in SPECS and i['data'] and i['data'][:8] in SPECS[i['program']]]
+        if (len(roots)!=1 or accounts[1]!=roots[0]['program']
+                or accounts[0] not in roots[0]['accounts']
+                or PUMP_FEE_PROGRAM not in roots[0]['accounts']):
+            return False
+    return True
+
+
 def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None):
     """Devolve events, evidence e limitations; formatos sem identidade dão ValueError.
 
@@ -443,6 +470,8 @@ def normalize_transaction(row, wallet, *, target_token=None, swap_evidence=None)
         limitations.append('Taxa de rede em lamports desconhecida.')
     programs = sorted({instruction['program'] for instruction in instructions if instruction['program']})
     unexpected_programs = set(programs) - AUXILIARY_PROGRAMS - set(SPECS)
+    if _verified_fee_reads(instructions):
+        unexpected_programs.discard(PUMP_FEE_PROGRAM)
     evidence = {'signature': signature, 'slot': block, 'transaction_index': _integer(row.get('transactionIndex')),
                 'block_time': stamp, 'fee_lamports': fee, 'fee_payer': payer,
                 'fee_attributed_to_wallet': payer == wallet, 'fee_usd': None,

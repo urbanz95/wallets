@@ -64,6 +64,7 @@ def public_summary(result, budget, started_at):
         'counts': _numeric_tree(result.get('counts', result.get('stages', result.get('stage_counts', {})))),
         'rejection_histogram': _numeric_tree(result.get('rejection_histogram', result.get('rejections', {}))),
         'budget': {}, 'telegram_sent': 0,
+        'check_statuses':_numeric_tree(result.get('check_statuses',{})),
         'ranking_levels': {level: result.get('ranking_levels', {}).get(level, 0)
                            if type(result.get('ranking_levels', {}).get(level, 0)) is int else 0
                            for level in ('A', 'B', 'C')},
@@ -130,12 +131,14 @@ def main(argv=None):
     parser.add_argument('--config', default='config.profit.toml')
     parser.add_argument('--probe-wallet-access', action='store_true',
                         help='Uma única consulta Wallet API a uma carteira já descoberta; sem ranking novo.')
+    parser.add_argument('--manual-only',action='store_true',help='Analisar apenas os pedidos na fila cifrada.')
     args = parser.parse_args(argv)
     try:
         for name in ('STATE_ENCRYPTION_KEY', 'BIRDEYE_API_KEY', 'HELIUS_API_KEY'):
             if not os.environ.get(name):
                 raise ExperimentError('Falta um segredo indispensável à experiência em Actions.')
         config = cli.load_config(args.config)
+        config['profit']['manual_only']=args.manual_only
         key = os.environ['STATE_ENCRYPTION_KEY']
         pipeline = None
         if args.probe_wallet_access:
