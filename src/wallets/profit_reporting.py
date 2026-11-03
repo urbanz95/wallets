@@ -20,8 +20,8 @@ from .models import dumps, parse_time
 
 LISBON = ZoneInfo('Europe/Lisbon')
 STAGES = frozenset(('candidates', 'pre_filter', 'prefilter', 'pnl_details', 'persistence',
-                    'pnl_responses', 'prefilter_passed', 'deep', 'top3', 'discovered', 'prefiltered', 'pnl_7d', 'pnl_30d'))
-BUDGET_KEYS = frozenset(('discovery', 'prefilter', 'persistence', 'deep', 'total', 'totals',
+                    'pnl_responses', 'prefilter_passed', 'refinement_attempted', 'refinement_complete', 'refinement_deferred', 'deep', 'top3', 'discovered', 'prefiltered', 'pnl_7d', 'pnl_30d'))
+BUDGET_KEYS = frozenset(('discovery', 'prefilter', 'refinement', 'persistence', 'deep', 'total', 'totals',
                          'stages', 'by_stage', 'birdeye', 'helius', 'reserved', 'attempted',
                          'refunded', 'requests', 'used', 'consumed', 'credits', 'cu',
                          'reserved_credits', 'attempted_credits', 'refunded_credits'))
@@ -54,7 +54,8 @@ PROVIDER_PNL_FIELDS = (
 HEADERS = ('Posição', 'Pontuação', 'Nível de evidência', 'Carteira', 'Resultado da avaliação',
            'PnL fornecedor 7d (USD)', 'PnL fornecedor 30d (USD)') + tuple(label for _, label in METRICS) + (
            'Início (Lisboa)', 'Fim (Lisboa)', 'Recolha (Lisboa)', 'Histórico profundo completo',
-           'Motivos e limitações', 'NÃO VERIFICADO')
+           'Motivos e limitações', 'NÃO VERIFICADO', 'Pré-filtro económico 7d (Birdeye)',
+           'Acompanhamento observado', 'Avisos de investigação')
 
 
 def _text(value):
@@ -125,6 +126,12 @@ def public_summary(telemetry, ranking=()):
             continue
         key = reason if isinstance(reason, str) and PUBLIC_REASON.fullmatch(reason) else 'other'
         histogram[key] = histogram.get(key, 0) + count
+    warnings = {}
+    for reason, count in _map(telemetry.get('warnings')).items():
+        if type(count) is not int or count < 0:
+            continue
+        key = reason if isinstance(reason, str) and PUBLIC_REASON.fullmatch(reason) else 'other'
+        warnings[key] = warnings.get(key, 0) + count
     levels = {level: 0 for level in ('A', 'B', 'C')}
     for row in ranking[:3]:
         level = row.get('evidence_level') if isinstance(row, dict) else None
@@ -132,7 +139,9 @@ def public_summary(telemetry, ranking=()):
             levels[level] += 1
     result = {'profile': 'profit-evidence-v1', 'stages': stages,
               'budget': _budget_counts(_map(telemetry.get('budget'))),
-              'rejections': dict(sorted(histogram.items())), 'ranking_levels': levels,
+              'rejections': dict(sorted(histogram.items())),
+              'refinement_reasons':{key:value for key,value in _map(telemetry.get('refinement_reasons')).items()
+                  if isinstance(key,str) and PUBLIC_REASON.fullmatch(key) and type(value) is int and value>=0}, 'warnings':dict(sorted(warnings.items())), 'ranking_levels': levels,
               'telegram_sent': 0}
     result['check_statuses']={kind:{name:count for name,count in _map(_map(telemetry.get('check_statuses')).get(kind)).items()
         if PUBLIC_REASON.fullmatch(name) and type(count) is int and count>=0} for kind in ('failed','unknown')}
@@ -270,6 +279,20 @@ def _deep_sheets(assessed, ranking):
             ('Tokens analisados', tokens, [58, 58]+[30]*10+[70])]
 
 
+def _research_status(candidate):
+    pre = _map(candidate.get('prefilter7'))
+    economic = ('Favorável segundo a Birdeye; não é contabilidade auditada' if pre.get('passed') is True else
+                'Não favorável ou inconclusivo; consultar motivos' if pre else UNKNOWN)
+    checks = {row.get('name'): row.get('status') for row in candidate.get('ranking_checks', [])
+              if isinstance(row, dict)}
+    behavior = [checks.get(name) for name in ('execution_intensity', 'holding_horizon')]
+    follow = ('Reprovado nos critérios comportamentais observados' if 'REPROVADA' in behavior else
+              'Intensidade e horizonte observados cumprem; execução de seguidor NÃO VERIFICADA'
+              if all(status == 'APROVADA' for status in behavior) else 'Por apurar: dados comportamentais insuficientes')
+    warnings = list(candidate.get('warnings') or []) + list(candidate.get('behavior_notes') or [])
+    return economic, follow, _text(warnings)
+
+
 def write_profit_reports(ranking, telemetry, output, *, assessed=()):
     """Top-3 anónimo; análises profundas adicionais só no Excel privado."""
     ranking = [row for row in ranking if isinstance(row, dict)][:3]
@@ -294,7 +317,7 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
         deep = _map(candidate.get('deep'))
         metrics = _map(deep.get('metrics'))
         pre7, pre30 = _map(candidate.get('prefilter7')), _map(candidate.get('prefilter30'))
-        state = 'Cumpre critérios observáveis' if candidate.get('assessment_passed') is True else 'Não concluída ou reprovada'
+        state = candidate.get('ranking_status') or ('Cumpre critérios observáveis' if candidate.get('assessment_passed') is True else 'Não concluída; avaliação por apurar')
         row = [_text(candidate.get('rank', index)), _text(candidate.get('score')),
                _text(candidate.get('evidence_level', 'C')), wallet, state,
                _text(pre7.get('pnl_usd')), _text(pre30.get('pnl_usd'))]
@@ -302,6 +325,7 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
         row += [_local(deep.get('period_start')), _local(deep.get('period_end')),
                 _local(deep.get('fetched_at')), _text(deep.get('complete')),
                 _text(candidate.get('reasons', [])), _text(candidate.get('unverified', []))]
+        row += list(_research_status(candidate))
         excel_rows.append(row)
         anonymous = {header: _anonymous(value, identities) for header, value in zip(HEADERS, row) if header != 'Carteira'}
         anonymous_rows.append(anonymous)
@@ -320,6 +344,7 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
                 metric_rows.append((index, label, key, _text(prefilter.get(key))))
     notes = [('Informação', 'Como interpretar'),
              ('Níveis A/B/C', 'A: cumpre os critérios verificáveis nesta avaliação; B: pré-filtro e análise profunda parcial; C: só pré-filtro. Nenhum nível é aprovação integral ou autorização Telegram.'),
+             ('Avisos e rejeições', 'Frequência acima do limiar é um aviso para investigar; não é rejeição económica nem prova de bot. PnL favorável do fornecedor não confirma acompanhamento. Pontuação organiza evidência e não mede qualidade absoluta.'),
              ('Objetivo do ranking', 'Mostrar até três posições ordenadas com evidência e motivos, mesmo sem carteiras de nível A. Posição e pontuação não compensam uma verificação reprovada ou desconhecida.'),
              ('Análises profundas adicionais', 'Quando disponíveis, as folhas Análises profundas e Tokens analisados incluem também carteiras fora do top-3. Uma análise profunda pode mostrar perdas, falhas ou custos desconhecidos; não significa seleção nem aprovação.'),
              ('Unidade SOL', 'Resultado recalculado em SOL. A evolução do câmbio SOL/USD pode mudar os sinais e as métricas; o resultado em USD permanece NÃO VERIFICADO.'),
@@ -339,12 +364,12 @@ def write_profit_reports(ranking, telemetry, output, *, assessed=()):
     extra=[]
     if assessed:
         pnl_headers = tuple(f'{label} — {period}d' for period in (7, 30) for _, label in PROVIDER_PNL_FIELDS)
-        rows=[('Carteira','Pedido manual')+pnl_headers+('Tokens 7d','Operações 7d','Pré-filtro favorável','Motivos')]
+        rows=[('Carteira','Pedido manual')+pnl_headers+('Tokens 7d','Operações 7d','Pré-filtro favorável','Motivos','Avisos','Refinamento 7d','Motivos de paginação')]
         for candidate in assessed:
             pre=_map(candidate.get('prefilter7')); long=_map(candidate.get('prefilter30'))
             pnl_values = tuple(source.get(key) for source in (pre, long) for key, _ in PROVIDER_PNL_FIELDS)
-            rows.append([_text(v) for v in (candidate.get('wallet'),candidate.get('manual',False))+pnl_values+(pre.get('tokens_count'),pre.get('trade_count'),pre.get('passed'),pre.get('reasons'))])
-        extra=[('Pré-filtros',rows,[58,20]+[40]*6+[20,25,28,80])]
+            rows.append([_text(v) for v in (candidate.get('wallet'),candidate.get('manual',False))+pnl_values+(pre.get('tokens_count'),pre.get('trade_count'),pre.get('passed'),pre.get('reasons'),pre.get('warnings',[]),_map(candidate.get('refinement7')).get('status'),_map(candidate.get('refinement7')).get('reasons'))])
+        extra=[('Pré-filtros',rows,[58,20]+[40]*6+[20,25,28,80,60,30,80])]
     _xlsx(paths['xlsx'], sheets+_deep_sheets(assessed, ranking)+extra)
     anonymous_headers = [header for header in HEADERS if header != 'Carteira']
     with paths['csv'].open('w', encoding='utf-8-sig', newline='') as handle:

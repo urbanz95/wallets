@@ -17,6 +17,7 @@ from .helius_collection import HeliusHistory
 from .models import parse_time, utcnow
 from .profit_discovery import discover
 from .profit_prefilter import prefilter_wallet
+from .profit_refinement import refine_candidates, refinement_reservation
 from .profit_ranking import rank_candidates
 from .profit_reporting import write_profit_reports
 from .profit_persistence import ensure_schema, load_receipts, save_receipts_and_prune, save_run
@@ -78,7 +79,7 @@ def _deep_allowed(prefilter30):
     """Uma lacuna30d permite medir7d próprios para B; uma falha conhecida não."""
     if not isinstance(prefilter30,dict):return False
     if prefilter30.get('passed') is True:return True
-    hard={'provider_pnl_not_positive','activity_over_daily_limit','provider_activity_absent',
+    hard={'provider_pnl_not_positive','provider_activity_absent',
           'prefilter_sample_insufficient','pnl_wallet_mismatch','provider_future_snapshot'}
     if any(str(reason).split(':',1)[0] in hard for reason in prefilter30.get('reasons',[])):
         return False
@@ -96,7 +97,7 @@ def _codes(values):
         'provider_7d','provider_30d','deep_coverage','recent_activity','sol_sample',
         'known_cost_scope','sol_worst_case','profit_factor','winner_removal','concentration',
         'execution_intensity','holding_horizon','identity','cohort_exclusion','sol_costs',
-        'pnl_unavailable','provider_dates','provider_future_snapshot','excluded_tag','discovery_activity_outside_window',
+        'rapid_closures_above_reference','holding_below_reference','pnl_unavailable','provider_dates','provider_future_snapshot','excluded_tag','discovery_activity_outside_window',
         'discovery_time_unknown','unsupported_network','pnl_pagination_changed',
         'pnl_token_schema_unknown','pnl_duplicate_token','pnl_pagination_incoherent','pnl_wallet_mismatch'}
     for value in values:
@@ -139,7 +140,7 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     bird=BirdeyeClient(os.environ.get('BIRDEYE_API_KEY',''),store,config['api'])
     helius=HeliusClient(os.environ.get('HELIUS_API_KEY',''),store,config['helius'])
     clients={'birdeye':bird,'helius':helius}
-    histogram=Counter();counts={'candidates':0,'pre_filter':0,'pnl_details':0,'pnl_responses':0,'prefilter_passed':0,'persistence':0,'deep':0,'top3':0}
+    histogram=Counter();warning_histogram=Counter();counts={'candidates':0,'pre_filter':0,'pnl_details':0,'pnl_responses':0,'prefilter_passed':0,'persistence':0,'deep':0,'top3':0}
     manual_only=settings.get('manual_only',False)
     with budget.stage('discovery',birdeye=0 if manual_only else int(settings.get('discovery_budget',230)),store=store,clients=clients):
         found={'candidates':[],'rejections':[],'errors':[]} if manual_only else discover(bird,store,config,now)
@@ -170,6 +171,22 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
             counts['prefilter_passed']+=int(candidate['prefilter7'].get('passed') is True)
             histogram.update(_codes(candidate['prefilter7'].get('reasons',[])))
     provisional=sorted((c for c in assessed if c['prefilter7'].get('passed')),key=_provider_order)
+    # Paginação adicional tem orçamento próprio: não multiplicar páginas para
+    # toda a população nem apagar o headline inicial quando o feed se move.
+    refinement_reasons={}
+    refinement_limit=int(settings.get('manual_refinement_budget' if manual_only else 'refinement_budget',0))
+    if refinement_limit>0:
+        page_limit=refinement_limit//30
+        planned=refinement_reservation(provisional,config,page_limit)
+        if planned:
+            with budget.stage('refinement',birdeye=30*planned,store=store,clients=clients):
+                refinement=refine_candidates(bird,provisional,config,now,page_limit)
+        else:
+            refinement=refine_candidates(bird,provisional,config,now,page_limit)
+        refinement_reasons=refinement['reasons']
+        for name in ('attempted','complete','deferred'):
+            counts['refinement_'+name]=refinement[name]
+        provisional=sorted((c for c in assessed if c['prefilter7'].get('passed')),key=_provider_order)
     persistence_candidates=provisional[:int(settings.get('max_persistence',3))]
     with budget.stage('persistence',birdeye=min(int(settings.get('persistence_budget',90)),len(persistence_candidates)*pnl_page_cost),store=store,clients=clients):
         for candidate in persistence_candidates:
@@ -214,12 +231,13 @@ def run_pipeline(store,config,budget,checkpoint,output,now=None):
     for candidate in assessed:
         for row in rank_candidates([candidate],config,evaluated_at):
             histogram.update(_codes(row.get('reason_codes',[])))
+            warning_histogram.update(_codes(row.get('warnings',[])))
             for check in row.get('ranking_checks',[]):
                 if check['status']=='REPROVADA':check_statuses['failed'][check['name']]+=1
                 elif check['status']=='INDETERMINADA':check_statuses['unknown'][check['name']]+=1
     levels=Counter(row.get('evidence_level','C') for row in ranked)
     telemetry={'started_at':now,'stages':counts,'budget':budget.stats,
-               'rejections':dict(histogram),'check_statuses':{k:dict(v) for k,v in check_statuses.items()},'ranking_levels':dict(levels)}
+               'rejections':dict(histogram),'refinement_reasons':refinement_reasons,'warnings':dict(warning_histogram),'check_statuses':{k:dict(v) for k,v in check_statuses.items()},'ranking_levels':dict(levels)}
     save_run(store,{'profile':settings.get('version',config['criteria_version']),'criteria':config,
                     'started_at':now,'finished_at':utcnow(),'candidates':assessed,'discovery_errors':found.get('errors',[]),
                     'ranking':ranked,'telemetry':telemetry})

@@ -60,13 +60,16 @@ def _config(config):
         'max_top1_share': Decimal('0.35'), 'max_top3_share': Decimal('0.65'),
         'max_unknown_cost_fraction': Decimal('0.2'), 'min_followable_hold_seconds': 300,
         'max_rapid_close_fraction': Decimal('0.2'), 'max_trades_per_day': 100,
-        'max_data_age_hours': 24,
+        'max_data_age_hours': 24, 'min_execution_signals': 2,
     }
     result = {key: _number(profile.get(key, default)) for key, default in defaults.items()}
     if any(value is None for value in result.values()):
         raise ValueError('Critério numérico de ranking inválido')
     if result['min_tokens'] <= ZERO or result['min_tokens'] != result['min_tokens'].to_integral_value():
         raise ValueError('Amostra mínima de ranking inválida')
+    raw_execution_signals = profile.get('min_execution_signals', 2)
+    if type(raw_execution_signals) is not int or raw_execution_signals not in (2, 3):
+        raise ValueError('Número mínimo de sinais de execução deve ser o inteiro 2 ou 3')
     for key in ('min_profit_factor', 'min_followable_hold_seconds', 'max_trades_per_day', 'max_data_age_hours'):
         if result[key] <= ZERO:
             raise ValueError('Limite de ranking inválido')
@@ -256,14 +259,35 @@ def _rank_one(candidate, criteria, now):
 
     trades = _number(metrics.get('trades_per_day'))
     rapid = _fraction(metrics.get('rapid_close_fraction'))
-    activity_known = trades is not None and trades >= ZERO and rapid is not None
-    activity_ok = activity_known and trades <= criteria['max_trades_per_day'] and rapid <= criteria['max_rapid_close_fraction']
-    add('execution_intensity', activity_known, activity_ok,
-        'Frequência e rapidez observadas dentro do universo acompanhável.' if activity_ok else
-        'Estratégia demasiado intensa/rápida ou dados insuficientes.',
-        {'trades_per_day': trades, 'rapid_close_fraction': rapid})
     holding = _number(metrics.get('median_holding_seconds'))
-    hold_known = holding is not None and holding >= ZERO
+    # Um volume elevado de decisões não prova execução rápida nem automatização.
+    # Combinar sinais só depois de demonstrar a cobertura dos dados que os medem.
+    behavior_coverage = complete and integrity_ok and scope_ok and sample_ok
+    trades_known = trades is not None and trades >= ZERO
+    holding_measured = holding is not None and holding >= ZERO
+    signals = {
+        'high_frequency': bool(trades_known and trades > criteria['max_trades_per_day']),
+        'rapid_closures': bool(rapid is not None and rapid > criteria['max_rapid_close_fraction']),
+        'short_holding': bool(holding_measured and holding < criteria['min_followable_hold_seconds']),
+    }
+    signal_count = sum(signals.values())
+    activity_known = behavior_coverage and trades_known and rapid is not None and holding_measured
+    required_signals = int(criteria['min_execution_signals'])
+    activity_ok = activity_known and signal_count < required_signals
+    add('execution_intensity', activity_known, activity_ok,
+        f'Cobertura suficiente; menos de {required_signals} sinais de execução inadequada observados.' if activity_ok else
+        f'Pelo menos {required_signals} sinais de execução inadequada observados.' if activity_known else
+        'Cobertura ou medições insuficientes para avaliar em conjunto frequência, rapidez e manutenção.',
+        {'trades_per_day': trades, 'rapid_close_fraction': rapid,
+         'median_holding_seconds': holding, 'signals': signals,
+         'observed_signal_count': signal_count, 'required_signal_count': required_signals,
+         'coverage_sufficient': behavior_coverage,
+         'max_trades_per_day': criteria['max_trades_per_day'],
+         'max_rapid_close_fraction': criteria['max_rapid_close_fraction'],
+         'min_followable_hold_seconds': criteria['min_followable_hold_seconds']})
+    # A manutenção mínima é um requisito de acompanhamento distinto de uma
+    # inferência de automatização. Um único sinal nunca confirma que seja bot.
+    hold_known = behavior_coverage and holding_measured
     hold_ok = hold_known and holding >= criteria['min_followable_hold_seconds']
     add('holding_horizon', hold_known, hold_ok,
         'Mediana de manutenção observada compatível com o horizonte mínimo.' if hold_ok else
@@ -322,7 +346,23 @@ def _rank_one(candidate, criteria, now):
         unverified.append({'name': 'provider_dates', 'reason': 'Atualidade e coerência temporal dos pré-filtros 7d/30d NÃO VERIFICADAS.'})
     if not complete:
         unverified.append({'name': 'complete_history', 'reason': 'Histórico integral de sete dias NÃO VERIFICADO.'})
-    secondary_notes = []
+    warning_codes = []
+    for source in (candidate, pre7, pre30, deep):
+        source_warnings = source.get('warnings')
+        if isinstance(source_warnings, list):
+            warning_codes.extend(value for value in source_warnings if isinstance(value, str))
+    behavior_notes = []
+    for signal, code, note in (
+        ('high_frequency', 'activity_over_daily_limit',
+         'Frequência elevada observada; isoladamente não demonstra automatização ou impossibilidade de acompanhamento.'),
+        ('rapid_closures', 'rapid_closures_above_reference',
+         'Fração de posições fechadas rapidamente acima da referência; avaliar em conjunto com os restantes sinais.'),
+        ('short_holding', 'holding_below_reference',
+         'Mediana de manutenção abaixo do horizonte mínimo; não confirma automatização.')):
+        if signals[signal]:
+            warning_codes.append(code)
+            behavior_notes.append(note)
+    secondary_notes = behavior_notes[:]
     if wr is not None and wr < criteria['min_win_rate']:
         secondary_notes.append('Win rate abaixo da referência secundária; payoff e perdas permanecem explícitos.')
     result.update({
@@ -333,6 +373,7 @@ def _rank_one(candidate, criteria, now):
         'reason_codes': [row['name'] for row in reason_rows],
         'reasons': list(dict.fromkeys(original_reasons+[row['reason'] for row in reason_rows])),
         'unverified': unverified, 'distinct_origin_tokens': origin_count,
+        'warnings': list(dict.fromkeys(warning_codes)), 'behavior_notes': behavior_notes,
         'evaluated_at': now, 'telegram_eligible': False,
         'score_definition': 'Pontuação fixa de organização da evidência, não probabilidade de lucro. Falhas não são compensadas por pontos.',
         'result_scope': 'Subtotal conservador dos tokens com custo SOL conhecido; não resultado global ou garantia de rentabilidade.',

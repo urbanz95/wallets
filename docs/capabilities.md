@@ -146,13 +146,13 @@ Tokens abertos ou desconhecidos ficam enumerados e fora do resultado bruto dos c
 Esta seleção tem pré-visualização local e não autoriza Telegram. O envio continua a exigir as oito verificações estritas originais; `selection.notifications="strict"` é a única configuração aceite. Alterar essa política depende de autorização expressa e implementação posterior. A [entrega](delivery.md) regista a reavaliação offline e distingue-a de novas consultas autenticadas ou de aprovação real.
 
 
-## Funil experimental por lucro — contratos revistos em 30-10-2026
+## Funil experimental por lucro — contratos revistos em 30-10-2026 e filtro revisto em 03-11-2026
 
 Esta secção descreve o branch experimental iniciado em `077096d`. Acrescenta descoberta e pré-filtro por métricas do fornecedor; não altera a política estrita do Telegram. A confirmação abaixo é **documental**, cruzando os esquemas individuais com a [matriz Standard](https://data.birdeye.so/docs/guides/data-accessibility-by-packages), a [tabela de CU](https://data.birdeye.so/docs/guides/what-is-compute-unit-cost) e os [limites oficiais](https://data.birdeye.so/docs/guides/api-access/rate-limiting). Os testes destes novos módulos usam fixtures e não confirmam acesso autenticado com a chave da conta. Uma execução real deve ficar identificada separadamente no relatório de entrega.
 
 | Etapa | Endpoint Standard e custo | Pedido implementado | Cobertura e limitação |
 |---|---|---|---|
-| Descoberta principal | `GET /trader/gainers-losers`, **30 CU** | `type=1W`, `sort_by=PnL`, `max_trade=700`, `offset=0`, `limit=100` | Classificação agregada de carteiras em Solana; não demonstra idade dos tokens, ciclos fechados, execução acompanhável ou ausência de bots. |
+| Descoberta principal | `GET /trader/gainers-losers`, **30 CU** | `type=1W`, `sort_by=realized_pnl`, sem `max_trade`, `offset=0`, `limit=100` | Classificação agregada de carteiras em Solana; não demonstra idade dos tokens, ciclos fechados, execução acompanhável ou ausência de bots. |
 | Complemento por tokens recentes | `GET /defi/v3/token/list`, **50 CU** | Uma página de 100; listagem entre o corte e os sete dias anteriores, liquidez e volume 24h mínimos configuráveis; valorização 24h opcional | Seleciona até cinco tokens para obter traders. O momento de listagem não prova a criação do token e a lista não é exaustiva. |
 | Traders por resultado realizado do token | `GET /defi/v2/tokens/top_traders`, **30 CU** por token | `time_frame=7d`, `sort_by=realized_pnl`, `sort_type=desc`, `offset=0`, `limit=10` | A origem é registada por token; encontrar lucro num token não demonstra lucro da carteira inteira. |
 | Pré-filtro 7d e persistência 30d | `POST /wallet/v2/pnl/details`, **30 CU** por página | `duration=7d` ou `30d`, `pnl_method=wac`, `position_scope=duration_only`, `sort_by=last_trade`, `sort_type=desc`, `offset`, `limit=100` | Apenas ordenação e pré-filtro. A avaliação independente usa contabilidade própria; USD do fornecedor não passa a FIFO em SOL. |
@@ -165,7 +165,7 @@ Esta secção descreve o branch experimental iniciado em `077096d`. Acrescenta d
 - Paginação: `limit` de 1 a 100 e `offset + limit <= 10000`. O perfil experimental usa só a primeira página de 100, sem afirmar que encontrou todas as carteiras lucrativas.
 - Filtros documentados incluem `min_trade`, `max_trade`, mínimos/máximos de volume USD, PnL realizado, não realizado e total. O contrato associa a ordenação `PnL` a um mínimo implícito de 1000 USD; o pedido omite `min_pnl`, em vez de inventar `min_pnl=0`. Isto introduz um viés adicional para carteiras de maior dimensão.
 - Os campos documentados por linha são `network`, `address`, `pnl`, `realized_pnl`, `unrealized_pnl`, `volume` e `trade_count`. `pnl` agrega realizado e não realizado em USD, não representa lucro líquido recalculado. Campos ausentes ficam desconhecidos.
-- Não há etiquetas, lista completa de tokens nem tempos por operação garantidos neste resultado. `trade_count / 7 <= 100` é apenas um filtro de intensidade média: não prova atividade uniforme, inexistência de rajadas nem estratégia humana.
+- Não há etiquetas, lista completa de tokens nem tempos por operação garantidos neste resultado. Desde `2026-11-03.profit.5`, `trade_count / 7 > 100` gera um aviso de intensidade média, sem veto económico: não prova atividade uniforme, rajadas, execução reproduzível ou identidade humana.
 - Uma carteira descoberta nesta classificação pode ter negociado tokens antigos. O requisito de atividade é a janela recente; a origem em tokens listados há até sete dias só fica demonstrada para candidatas com evidência adicional de `top_traders` desses tokens.
 
 ### Campos de top traders usados pelo novo funil
@@ -192,10 +192,30 @@ Esta secção descreve o branch experimental iniciado em `077096d`. Acrescenta d
 
 O plano Standard permanece em 30000 CU/mês, um pedido por segundo por conta e sem compras adicionais. A página de rate limits refere também limites de grupos wallet (5 pedidos/s e 75/min); prevalece o limite da conta mais restritivo, sem ultrapassar 60 pedidos/min. Uma frase genérica antiga da página de limites restringe Standard a três endpoints, mas as páginas individuais acima e a matriz específica assinalam estes contratos como Standard: esta divergência fica registada e exige uma consulta real controlada antes de afirmar acesso da conta. Não foram encontrados avisos de depreciação nestes três contratos à data da revisão; ausência de aviso não garante disponibilidade futura ou retenção integral.
 
-O teto documental do estágio de descoberta é **230 CU**: 30 da classificação global, 50 da lista de tokens e 5 × 30 dos traders. O perfil pode reservar 210 CU para sete pré-filtros 7d, 90 CU para três consultas 30d e 270 CU para a análise profunda, totalizando 800 CU. Estes são limites de planeamento, não consumos reais: o relatório de execução tem de distinguir reservas, pedidos efetivos, cache e consumo por estágio. Uma falha, restrição ou quota esgotada deixa as limitações explícitas e nunca autoriza consultar um endpoint pago ou outro fornecedor.
+O teto documental do estágio de descoberta é **230 CU**: 30 da classificação global, 50 da lista de tokens e 5 × 30 dos traders. No desenho inicial, o perfil podia reservar 210 CU para sete pré-filtros 7d, 90 CU para três consultas 30d e 270 CU para a análise profunda, totalizando 800 CU. A repartição vigente consta da secção `2026-11-03.profit.5` abaixo. Estes são limites de planeamento, não consumos reais: o relatório de execução tem de distinguir reservas, pedidos efetivos, cache e consumo por estágio. Uma falha, restrição ou quota esgotada deixa as limitações explícitas e nunca autoriza consultar um endpoint pago ou outro fornecedor.
 
 Os testes novos verificam contratos, ordenação, etiquetas, amostras por token, paginação, respostas parciais, orçamentos interrompidos e pré-filtro sem rede. **Não são uma validação autenticada destas novas consultas**, nem evidência de que qualquer carteira real seja rentável ou acompanhável. Identificadores de carteira e evidências individualizadas ficam apenas no estado cifrado e no Excel privado; este documento contém só contratos e limitações.
 
 Validação autenticada do novo perfil (30-10-2026): gainers `1W/PnL` e top traders `realized_pnl` devolveram dados com os campos documentados. Em `pnl/details`, a lista incluiu SOL/stablecoins além de `summary.unique_tokens`; a implementação separa esses ativos antes de contar a amostra. Divergência remanescente mantém métricas por token desconhecidas, sem descartar o headline separado. Dados reais permanecem no cofre cifrado; não são fixtures públicas.
 
-Perfil operacional atual `2026-10-30.profit.3`: gainers ordena por `realized_pnl` (enum oficial), 13 pré-filtros7d (390CU), três30d (90CU) e seis páginas de histórico trader (72CU); com descoberta230CU, total planeado782CU, teto global800CU. Substitui os exemplos anteriores de `PnL` e sete pré-filtros neste perfil, sem mudar os contratos. Uma sondagem autenticada de um pedido Wallet API devolveuHTTP200 depois do429 da lista de tokens; a limitação dessa lista não demonstra indisponibilidade do contrato Wallet. Circuitos separados conservam autenticação, quota,1rps/conta e Retry-After partilhados.
+Perfil operacional histórico `2026-10-30.profit.3` (substituído pelo orçamento abaixo): gainers ordena por `realized_pnl` (enum oficial), 13 pré-filtros7d (390CU), três30d (90CU) e seis páginas de histórico trader (72CU); com descoberta230CU, total planeado782CU, teto global800CU. Substitui os exemplos anteriores de `PnL` e sete pré-filtros neste perfil, sem mudar os contratos. Uma sondagem autenticada de um pedido Wallet API devolveuHTTP200 depois do429 da lista de tokens; a limitação dessa lista não demonstra indisponibilidade do contrato Wallet. Circuitos separados conservam autenticação, quota,1rps/conta e Retry-After partilhados.
+
+
+### Perfil vigente `2026-11-03.profit.5` — omissão do filtro e refinamento limitado
+
+A referência oficial de [Gainers/Losers](https://data.birdeye.so/docs/data-api/wallet-networth-pnl/get-trader-gainers-losers) foi revista em 03-11-2026 para confirmar `max_trade`: é um parâmetro inteiro opcional, sem valor por defeito declarado, ao contrário de `type` e `sort_by`, assinalados como obrigatórios. A implementação omite o parâmetro, em vez de inventar um teto superior. Conserva `type=1W`, `sort_by=realized_pnl`, paginação de até 100 resultados e o custo de 30 CU. O mínimo implícito documentado de PnL realizado é 1 000 USD quando essa ordenação é usada; omitir `max_trade` não torna a descoberta exaustiva. A omissão foi confirmada documentalmente; o acesso autenticado desta revisão deve ser registado separadamente na validação.
+
+Não há novos endpoints ou fornecedores. O refinamento usa o mesmo `POST /wallet/v2/pnl/details`, com 30 CU por página, WAC e `duration_only`. A primeira página é reservada mesmo que possa vir da cache. Uma resposta móvel que mude entre páginas não é tratada como fotografia completa: preserva-se a triagem inicial e guarda-se a falha/limitação separadamente. Não há combinação silenciosa de páginas antigas e atuais.
+
+| Estágio automático atual | Teto Birdeye | Teto Helius |
+|---|---:|---:|
+| Ranking global, lista e cinco tokens | 230 CU | 0 |
+| Nove consultas iniciais 7d | 270 CU | 0 |
+| Refinamento 7d de até duas candidatas | 120 CU | 0 |
+| Três consultas 30d | 90 CU | 0 |
+| Duas análises profundas | 72 CU | 1 720 créditos |
+| Total planeado | **782 CU** | **1 720 créditos** |
+
+O teto de execução Birdeye mantém-se em 800 CU. A reserva automática de refinamento comporta quatro páginas planeadas no total. Um pedido manual cifrado desativa a descoberta e pode reservar até 300 CU, dez páginas planeadas no total; o limite individual também é dez páginas. Os restantes estágios continuam proporcionais às carteiras que avançam. Não se reserva uma carteira cuja estimativa de páginas ultrapasse a margem disponível; fica adiada, com a limitação visível. A cache e a devolução de créditos não aumentam o número de vagas planeadas naquela passagem.
+
+Estas alterações permitem investigar carteiras frequentes e completar algumas listas extensas; não fornecem liquidez executável, decodificação de todos os protocolos ou contabilidade global por si mesmas. O resultado da revisão em dados reais deve distinguir o acesso bem-sucedido, as páginas completas, a interpretação própria e a aprovação. As validações históricas acima não constituem validação desta revisão.

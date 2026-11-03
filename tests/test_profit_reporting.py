@@ -121,6 +121,26 @@ class ProfitReportingTests(unittest.TestCase):
             self.assertNotIn(WALLETS[0], result[key].read_text(encoding='utf-8-sig'))
         self.assertEqual(result['public_summary']['telegram_sent'], 0)
 
+    def test_economic_signal_and_behavior_unknown_remain_separate_from_frequency_warning(self):
+        value=candidate(deep={})
+        value['prefilter7'].update(passed=True,warnings=['activity_over_daily_limit'])
+        value['warnings']=['activity_over_daily_limit']
+        value['ranking_checks']=[{'name':'execution_intensity','status':'INDETERMINADA'},
+                                 {'name':'holding_horizon','status':'INDETERMINADA'}]
+        stats=telemetry();stats['warnings']={'activity_over_daily_limit':1,WALLETS[0]:7}
+        stats['stages']['refinement_complete']=1
+        stats['budget']['refinement']={'birdeye':{'reserved':60,'attempted':30,'refunded':30}}
+        result=write_profit_reports([value],stats,self.root,assessed=[value])
+        rows=self.sheet_rows(result['xlsx'],1); row=dict(zip(rows[0],rows[1]))
+        self.assertIn('Favorável segundo a Birdeye',row['Pré-filtro económico 7d (Birdeye)'])
+        self.assertIn('Por apurar',row['Acompanhamento observado'])
+        self.assertIn('activity_over_daily_limit',row['Avisos de investigação'])
+        self.assertEqual(result['public_summary']['warnings']['activity_over_daily_limit'],1)
+        self.assertEqual(result['public_summary']['stages']['refinement_complete'],1)
+        self.assertEqual(result['public_summary']['budget']['refinement']['birdeye']['attempted'],30)
+        self.assertNotIn(WALLETS[0],json.dumps(result['public_summary']))
+        self.assertEqual(result['public_summary']['telegram_sent'],0)
+
     def test_identity_is_only_in_excel_not_other_reports_or_public_summary(self):
         data = [candidate(0),candidate(1),candidate(2)]
         result = write_profit_reports(data, telemetry(), self.root)
@@ -157,7 +177,7 @@ class ProfitReportingTests(unittest.TestCase):
                 document=ET.fromstring(archive.read(name))
                 self.assertFalse(any(element.tag.endswith('}f') for element in document.iter()))
         rows=self.sheet_rows(result['xlsx'])
-        self.assertIn('=HYPERLINK', rows[1][-2])
+        self.assertIn('=HYPERLINK', dict(zip(rows[0],rows[1]))['Motivos e limitações'])
         html=result['html'].read_text()
         self.assertNotIn('<script>',html)
         self.assertIn('&lt;script&gt;',html)
@@ -181,7 +201,7 @@ class ProfitReportingTests(unittest.TestCase):
         result=write_profit_reports([value],telemetry(),self.root)
         rows=self.sheet_rows(result['xlsx'])
         self.assertEqual(rows[1][2],'A')
-        self.assertIn('Taxas USD',rows[1][-1])
+        self.assertIn('Taxas USD',dict(zip(rows[0],rows[1]))['NÃO VERIFICADO'])
         notes=' '.join(' '.join(row) for row in self.sheet_rows(result['xlsx'],3))
         self.assertIn('Nenhum nível é aprovação integral',notes)
         self.assertIn('Desligado nesta experiência',notes)

@@ -62,7 +62,7 @@ class ProfitDiscoveryTests(unittest.TestCase):
         client=Client();r=discover(client,self.store,{},NOW)
         method,path,params,_=client.calls[0]
         self.assertEqual((method,path),('GET',GAINERS_ENDPOINT))
-        self.assertEqual(params,{'type':'1W','sort_by':'realized_pnl','max_trade':700,'offset':0,'limit':100})
+        self.assertEqual(params,{'type':'1W','sort_by':'realized_pnl','offset':0,'limit':100})
         self.assertEqual(ENDPOINTS[('GET',GAINERS_ENDPOINT)],30)
         self.assertEqual(r['candidates'][0]['wallet'],A)
         self.assertEqual(r['candidates'][0]['discovery']['provider_pnl_usd'],Decimal(2000))
@@ -116,11 +116,37 @@ class ProfitDiscoveryTests(unittest.TestCase):
         self.assertEqual([row['token'] for row in r['selected_tokens']],[T3])
         self.assertEqual([call[2]['address'] for call in client.calls if call[1]==TOP_ENDPOINT],[T3])
 
-    def test_overactive_wallet_is_excluded_before_prefilter_or_deep(self):
-        client=Client(gainers=[gainer(A,trades=701)],traders={T1:[top(A)]})
+    def test_profitable_high_frequency_wallet_remains_available_with_evidence(self):
+        client=Client(gainers=[gainer(A,pnl=20000,trades=3500)],traders={T1:[top(A)]})
         r=discover(client,self.store,{},NOW)
+        self.assertEqual(r['rejections'],[])
+        self.assertNotIn('max_trade',client.calls[0][2])
+        row=r['candidates'][0]
+        self.assertEqual(row['wallet'],A)
+        self.assertEqual(row['warnings'],['activity_over_daily_limit'])
+        signal=row['discovery']['sources'][0]['intensity']
+        self.assertEqual(signal['scope'],'provider_wallet_1W')
+        self.assertEqual(signal['trades_per_day'],500)
+        self.assertEqual(signal['warning_threshold'],100)
+        self.assertTrue(signal['above_warning_threshold'])
+        self.assertFalse(signal['followability_verified'])
+
+    def test_high_frequency_token_origin_is_an_observation_not_wallet_rejection(self):
+        trader=top(A);trader['trade']=3500
+        r=discover(Client(gainers=[],traders={T1:[trader]}),self.store,{},NOW)
+        self.assertEqual(r['rejections'],[])
+        self.assertEqual(r['candidates'][0]['warnings'],['activity_over_daily_limit'])
+        evidence=self.store.discovery_evidence(A)[0]['evidence']
+        self.assertEqual(evidence['intensity']['scope'],'provider_token_7d')
+        self.assertEqual(evidence['intensity']['trade_count'],3500)
+
+    def test_high_frequency_does_not_override_negative_profit_or_bad_metrics(self):
+        losing=gainer(A,pnl=-10,trades=3500)
+        invalid=gainer(B,pnl=20000,trades=3500);invalid['realized_pnl']='NaN'
+        r=discover(Client(gainers=[losing,invalid],tokens=[]),self.store,{},NOW)
         self.assertEqual(r['candidates'],[])
-        self.assertIn('activity_over_daily_limit',r['rejections'][0]['reasons'])
+        self.assertEqual({reason for row in r['rejections'] for reason in row['reasons']},
+                         {'provider_pnl_not_positive','discovery_metrics_unknown'})
 
     def test_zero_trade_gains_are_not_current_trading_activity(self):
         r=discover(Client(gainers=[gainer(A,trades=0)],tokens=[]),self.store,{},NOW)

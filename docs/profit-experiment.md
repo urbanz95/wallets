@@ -23,12 +23,12 @@ Quando pedir `STATE_ENCRYPTION_KEY`, cole a mesma chave que guardou no secret do
 
 O exportador lê exclusivamente o cofre `wallets-state-profit-ranking`, verifica e descifra uma cópia temporária e apaga essa base temporária no fim, incluindo em caso de erro. Não altera o cofre nem a base original. Se já tiver a base local da experiência, use `python scripts/profit_export.py --db state/profit.sqlite`; nesse caso não precisa de chave nem de acesso ao GitHub. Se ainda não existir uma execução guardada, primeiro execute a experiência em Actions. A pasta `reports/` é ignorada pelo Git: mantenha o Excel privado e não o publique como artefacto, issue ou commit. Os CSV/JSON/HTML auxiliares são anónimos.
 
-## Diagnóstico confirmado e correções
+## Diagnóstico confirmado e correções — perfil atual `2026-11-03.profit.5`
 
 1. A descoberta antiga ordenava por volume e descartava evidência de resultados. A nova usa `/trader/gainers-losers` em `1W`, `sort_by=realized_pnl`, como origem principal. Complementa com até cinco tokens listados na Birdeye nos últimos sete dias e `/defi/v2/tokens/top_traders`, `sort_by=realized_pnl`. São preservados PnL, cashflow disponível, contagens, datas e etiquetas. O filtro de valorização mínima de 10% deixa de ser obrigatório. Etiquetas explícitas sniper/bundler/insider excluem desta população experimental; não constituem prova de fraude.
-2. O funil antigo era estreito. Agora enumera até 100 traders globais e 50 ocorrências nos cinco tokens, deduplica e consulta até13 pré-filtros7d. As três melhores recebem também 30d; só duas avançam para a análise profunda. Repetição em tokens de origem tem prioridade; depois contam PF/concentração conhecidos, diversidade limitada a 40 tokens e, por fim, montante de PnL. Estes pesos são heurísticos fixos, anteriores à nova execução.
+2. O funil antigo era estreito. Agora enumera até 100 traders globais e 50 ocorrências nos cinco tokens, deduplica e consulta até nove pré-filtros 7d. Reserva depois até 120 CU para completar páginas de candidatas prioritárias; uma carteira parcial não é excluída por esse motivo nem tratada como integral. As três melhores recebem também 30d; só duas avançam para a análise profunda. A fila mantém rotação e usa repetição entre tokens e PnL recente nos empates. Para aprofundar, após a prioridade manual e o pré-filtro, contam a amostra potencial de 40 tokens, PF/concentração conhecidos, repetição entre tokens e, por fim, o montante de PnL. São prioridades heurísticas, não aprovação financeira.
 3. Compradores iniciais tinham prioridade. Foram retirados deste perfil: comprar cedo não prova ser sniper, mas não é a população pretendida para acompanhamento.
-4. O pré-filtro recusa mais de 100 trades/dia em média antes de gastar créditos Helius. Uma análise profunda consulta no máximo uma página de 1000 transações por carteira; atingir o limite deixa o histórico parcial, não aprovado por omissão.
+4. A descoberta já não envia `max_trade=700` e frequência superior a 100 operações/dia gera um aviso, sem excluir a investigação económica. A avaliação comportamental combina frequência, fechos rápidos e duração das posições com cobertura suficiente. O horizonte mínimo de 300 segundos mantém-se como requisito separado. Cada análise profunda admite até seis páginas Helius de 1000 transações, mais o backfill limitado já documentado; atingir um limite mantém a cobertura parcial, sem aprovação por omissão.
 5. A Helius não fornece USD. O novo FIFO usa apenas SOL/wSOL atribuído à mesma transação, com taxa de rede e rendas reconciliadas. Swaps Pump reconhecidos são suportados; outros swaps simples podem ser corroborados pelas duas pernas Birdeye, com hash, carteira, data, índice, quantidades e fluxo SOL coincidentes. Transferências adicionais, stablecoins como contrapartida, várias rotas e ambiguidades não são convertidas em custos inventados. O valor USD não converte retroativamente o histórico.
 6. A exclusão de abertos criava seleção de um subconjunto. Agora cada token de custo conhecido contribui com realizado menos o custo restante, incluindo perdedores abertos; marcas, quando existirem, são um cenário separado. A persistência SQLite já existia: a lacuna era prova de desempenho em períodos mais longos, não ausência de armazenamento. Os headlines WAC positivos em 7d/30d são proxies sobrepostos, não persistência independente.
 
@@ -39,22 +39,29 @@ O endpoint global pode incluir tokens antigos **negociados agora**. Só as orige
 | Estágio | Reserva Birdeye máxima | Reserva Helius máxima |
 |---|---:|---:|
 | Descoberta: ranking + lista + cinco tokens | 230 CU | 0 |
-| Treze pré-filtros7d | 390 CU | 0 |
+| Nove pré-filtros 7d | 270 CU | 0 |
+| Refinamento 7d das candidatas prioritárias | 120 CU | 0 |
 | Três consultas 30d | 90 CU | 0 |
-| Duas análises profundas | 72 CU | 200 créditos |
-| Total planeado | 782 CU | 200 créditos |
+| Duas análises profundas | 72 CU | 1 720 créditos |
+| Total planeado | **782 CU** | **1 720 créditos** |
 
-Estes valores são tetos, não cobranças fixas: as reservas seguintes são proporcionais ao número de candidatas que efetivamente avança. As duas análises previstas requerem até 72 CU Birdeye (seis páginas de 12 CU) e 200 créditos Helius; os 270 CU são o teto configurável, não uma reserva obrigatória. Este perfil faz uma tentativa HTTP por consulta (`max_retries=0`), para um timeout não consumir as vagas das restantes candidatas. A execução seguinte pode voltar a tentar; o estado incremental é conservado. Outros perfis mantêm as retentativas próprias.
+Estes valores são tetos, não cobranças fixas: as reservas seguintes são proporcionais ao número de candidatas que efetivamente avança. As duas análises previstas reservam até 72 CU Birdeye (seis páginas de 12 CU) e 1 720 créditos Helius, incluindo paginação recente, backfill e Parsed Events. O teto global Birdeye mantém-se em 800 CU. A consulta inicial continua limitada a uma página por carteira; não se multiplica esse custo por toda a população. Este perfil faz uma tentativa HTTP por consulta (`max_retries=0`), para um timeout não consumir as vagas das restantes candidatas. A execução seguinte pode voltar a tentar; o estado incremental é conservado. Outros perfis mantêm as retentativas próprias.
+
+O refinamento automático tem até quatro páginas planeadas no total (120 CU), distribuídas por até duas candidatas. A estimativa inclui a primeira página, mesmo quando venha da cache; páginas não tentadas são reembolsadas, sem criar vagas adicionais nessa passagem. Só se tentam carteiras cuja estimativa cabe na reserva. Cada carteira admite no máximo dez páginas. Se as páginas mudarem de conteúdo, a consulta falhar ou o orçamento não chegar, conserva-se o resumo inicial e a paginação fica NÃO VERIFICADA; não se misturam páginas de execuções diferentes. Uma resposta nova completa com PnL não positivo atualiza a decisão corrente; o resumo positivo anterior fica apenas como histórico.
+
+Num pedido manual cifrado não há descoberta e o teto de refinamento é 300 CU, até dez páginas planeadas, dentro dos mesmos 800 CU globais. Isso permite investigar uma carteira com mais de 100 tokens sem elevar o orçamento de todas as pesquisas. É um teto de trabalho, não uma promessa de completude: o feed pode mudar e a interpretação contabilística pode continuar insuficiente.
 
 A reserva central é publicada duravelmente **antes** de conceder acesso à rede a cada estágio. Só créditos nunca tentados são devolvidos no fecho controlado. Timeouts e crashes não são reembolsados por presunção. O ledger partilhado usa o cofre principal, com o formato original compatível com a main; o ranking usa outro cofre. A mesma exclusão mútua `wallets-durable-state` impede execuções concorrentes no repositório. Consumo de outras aplicações da conta não é conhecido por este ledger.
 
-Há pré-verificação de disco e tamanho antes de cada reserva, limite experimental de 128 MiB e normalização seguida de poda atómica dos payloads RPC. Os receipts preservam prova mínima, assinatura, hash, saldos, custos, razões e manifestos; a sua integridade é verificada ao recuperar. Não se apagam payloads cuja normalização não ficou persistida. A experiência começa vazia, sem copiar centenas de MiB de payloads antigos. Dados antigos de outros cofres não são apagados.
+Há pré-verificação de disco e tamanho antes de cada reserva e limite experimental de 128 MiB. Desde a revisão de 02-11-2026, a origem RPC comprimida fica conservada durante 35 dias para permitir reinterpretação; elimina-se apenas a cópia redundante depois de persistir a evidência autenticada. Receipts, interpretações versionadas e snapshots preservam hashes, saldos, custos e razões. Dados antigos de outros cofres não são apagados.
 
 Snapshots do ranking são imutáveis e guardam configuração, datas e dados disponíveis. Não há simulação de acompanhamento, informação futura ou preço de execução atribuído a um seguidor. Datas internas UTC e apresentação Europe/Lisbon. Cópias cifradas de recuperação em artefactos têm retenção de 90 dias; o cofre em Releases é a fonte durável, não a cache nem o disco temporário.
 
 ## Interpretar a saída
 
 O Excel contém endereço, ranking, score, âmbito, PnL WAC 7d/30d em USD separado das métricas FIFO SOL, custo aberto, concentração, motivos e NÃO VERIFICADO. A pontuação organiza evidência; não é probabilidade de lucro. A exige todos os critérios verificáveis do perfil; B indica análise profunda parcial/insuficiente; C apenas pré-filtro. Falhas financeiras conhecidas ficam assinaladas e ordenadas depois de candidatas sem essas falhas. Uma amostra insuficiente nunca recebe A.
+
+O Excel separa **Pré-filtro económico 7d (Birdeye)**, **Acompanhamento observado** e **Avisos de investigação**. PnL favorável pode coexistir com acompanhamento por apurar. O resumo público separa o histograma de avisos do de reprovações e mantém apenas contagens, sem identidades.
 
 O resultado SOL conhecido é um **subtotal**; tokens UNKNOWN não são zero. Inventário global, cobertura global, conversão USD, custos não identificados, saída executável, coordenação/MEV, identidade humana, etiquetas completas e persistência independente continuam NÃO VERIFICADOS. Nível A não significa aprovação integral nem reproduzibilidade garantida.
 
@@ -88,3 +95,12 @@ O perfil passa a completar mais páginas, guardar a origem comprimida para novas
 Para pedir uma carteira sem a publicar, executar localmente `PYTHONPATH=src:scripts python scripts/profit_enqueue.py`: pede a chave e o endereço com entrada oculta, cifra um pedido autenticado válido por12horas e inicia o workflow no branch experimental. O endereço não segue em claro no formulário nem na linha de comando. Actions descifra e guarda a fila no cofre, sob a exclusão mútua do workflow. O pedido tem identidade e proteção contra repetição. Não são necessárias permissões locais de upload de Releases nem novos secrets. O campo legado `wallet` continua vazio. O Telegram mantém-se desligado.
 
 Parsed Events e o backfill não garantem que uma carteira passe. No Excel, um resultado Birdeye favorável continua a ser uma métrica do fornecedor; rentabilidade própria e acompanhamento exigem as restantes provas. A main e a política Telegram não foram alteradas.
+
+
+## Correção de 03-11-2026: admissão económica e evidência de acompanhamento
+
+Esta revisão substitui o veto de frequência das versões anteriores; não muda os resultados históricos guardados nem os limiares financeiros. O limite de 100 operações/dia continua visível como sinal heurístico. Sozinho não demonstra uma estratégia impossível de acompanhar. O pré-filtro conserva bloqueios por PnL não positivo, ausência de atividade, dados inválidos e informação futura. As etiquetas excluídas mantêm-se.
+
+A fila conserva tokens de origem com a data de observação e expira-os aos sete dias. Mantém pedidos manuais, pendências e rotação; nos empates dá prioridade à repetição entre tokens e a PnL recente válido. Um pedido manual não renova artificialmente uma origem antiga.
+
+Os testes desta revisão distinguem admissão para investigar de aprovação final, preservação de resumos quando a paginação falha, reservas limitadas e avisos comportamentais. A validação real da revisão deve ser consultada em [profit-validation.md](profit-validation.md); esta descrição da implementação não afirma que uma nova carteira já tenha sido aprovada. Os critérios de 40 tokens conhecidos, PF ≥1,3, concentração, resultados sem vencedores e restantes provas continuam em vigor. Telegram permanece desligado e a main não é alterada.

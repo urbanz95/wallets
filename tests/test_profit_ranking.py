@@ -87,7 +87,6 @@ class ProfitRankingTests(unittest.TestCase):
     def test_financial_and_execution_failures_each_block_a(self):
         failures={'worst_case_sol':Decimal('-1'),'profit_factor':Decimal('1.2'),
                   'without_best_sol':Decimal('0'),'without_top3_sol':Decimal('-2'),
-                  'trades_per_day':Decimal('101'),'rapid_close_fraction':Decimal('.21'),
                   'median_holding_seconds':Decimal('299')}
         for field,value in failures.items():
             item=candidate();item['deep']['metrics'][field]=value
@@ -96,6 +95,100 @@ class ProfitRankingTests(unittest.TestCase):
                 self.assertNotEqual(row['tier'],'A')
                 self.assertTrue(row['hard_rejected'])
                 self.assertFalse(row['assessment_passed'])
+
+    def test_high_frequency_alone_warns_without_proving_unfollowable_execution(self):
+        for frequency in (Decimal('101'), Decimal('10000')):
+            item=candidate();item['deep']['metrics']['trades_per_day']=frequency
+            with self.subTest(frequency=frequency):
+                row=rank_candidates([item],CONFIG,NOW)[0]
+                check=next(c for c in row['ranking_checks'] if c['name']=='execution_intensity')
+                self.assertEqual(check['status'],'APROVADA')
+                self.assertEqual(check['evidence']['observed_signal_count'],1)
+                self.assertTrue(check['evidence']['signals']['high_frequency'])
+                self.assertIn('activity_over_daily_limit',row['warnings'])
+                self.assertTrue(row['behavior_notes'])
+                self.assertEqual(row['tier'],'A')
+                self.assertFalse(row['telegram_eligible'])
+
+    def test_execution_risk_requires_multiple_measured_signals(self):
+        for changes in (
+            {'trades_per_day':101,'rapid_close_fraction':Decimal('.21')},
+            {'trades_per_day':101,'median_holding_seconds':299},
+            {'rapid_close_fraction':Decimal('.21'),'median_holding_seconds':299},
+        ):
+            item=candidate();item['deep']['metrics'].update(changes)
+            with self.subTest(changes=changes):
+                row=rank_candidates([item],CONFIG,NOW)[0]
+                check=next(c for c in row['ranking_checks'] if c['name']=='execution_intensity')
+                self.assertEqual(check['status'],'REPROVADA')
+                self.assertEqual(check['evidence']['observed_signal_count'],2)
+                self.assertTrue(row['hard_rejected'])
+                self.assertFalse(row['assessment_passed'])
+        # Rapidez isolada é um sinal; a manutenção mínima continua independente.
+        item=candidate();item['deep']['metrics']['rapid_close_fraction']=Decimal('.21')
+        row=rank_candidates([item],CONFIG,NOW)[0]
+        self.assertEqual(row['tier'],'A')
+        self.assertIn('rapid_closures_above_reference',row['warnings'])
+        item=candidate();item['deep']['metrics']['median_holding_seconds']=299
+        row=rank_candidates([item],CONFIG,NOW)[0]
+        checks={c['name']:c['status'] for c in row['ranking_checks']}
+        self.assertEqual(checks['execution_intensity'],'APROVADA')
+        self.assertEqual(checks['holding_horizon'],'REPROVADA')
+        self.assertFalse(row['assessment_passed'])
+
+    def test_execution_signals_do_not_turn_incomplete_coverage_into_approval_or_rejection(self):
+        for change in ('partial','invalid','unknown-cost','small-sample','missing-rapid','missing-holding'):
+            item=candidate();item['deep']['metrics']['trades_per_day']=1000
+            item['deep']['metrics']['rapid_close_fraction']=Decimal('.3')
+            if change=='partial':item['deep']['complete']=False
+            elif change=='invalid':item['deep']['coverage']['invalid_count']=1
+            elif change=='unknown-cost':item['deep']['metrics']['unknown_cost_fraction']=Decimal('.5')
+            elif change=='small-sample':item['deep']['metrics']['known_tokens_count']=39
+            elif change=='missing-rapid':item['deep']['metrics']['rapid_close_fraction']=None
+            else:item['deep']['metrics']['median_holding_seconds']=None
+            with self.subTest(change=change):
+                row=rank_candidates([item],CONFIG,NOW)[0]
+                check=next(c for c in row['ranking_checks'] if c['name']=='execution_intensity')
+                self.assertEqual(check['status'],'INDETERMINADA')
+                self.assertFalse(row['assessment_passed'])
+                self.assertNotEqual(row['tier'],'A')
+
+    def test_execution_signal_requirement_is_configurable_but_never_one(self):
+        for value in (1,True,2.0,Decimal('2'),0,4,'2'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                rank_candidates([candidate()],{'profit':{'min_execution_signals':value}},NOW)
+        settings=deepcopy(CONFIG);settings['profit']['min_execution_signals']=3
+        item=candidate();item['deep']['metrics'].update(trades_per_day=101,rapid_close_fraction=Decimal('.21'))
+        row=rank_candidates([item],settings,NOW)[0]
+        check=next(c for c in row['ranking_checks'] if c['name']=='execution_intensity')
+        self.assertEqual(check['status'],'APROVADA')
+        self.assertEqual(check['evidence']['required_signal_count'],3)
+        self.assertEqual(check['evidence']['observed_signal_count'],2)
+        self.assertIn('menos de 3 sinais',check['reason'])
+        self.assertEqual(row['tier'],'A')
+        item['deep']['metrics']['median_holding_seconds']=299
+        row=rank_candidates([item],settings,NOW)[0]
+        checks={c['name']:c for c in row['ranking_checks']}
+        self.assertEqual(checks['execution_intensity']['status'],'REPROVADA')
+        self.assertEqual(checks['execution_intensity']['evidence']['observed_signal_count'],3)
+        self.assertIn('Pelo menos 3 sinais',checks['execution_intensity']['reason'])
+        # Com apenas manutenção curta, o requisito de horizonte reprova sozinho.
+        item['deep']['metrics'].update(trades_per_day=20,rapid_close_fraction=Decimal('.05'))
+        row=rank_candidates([item],settings,NOW)[0]
+        checks={c['name']:c['status'] for c in row['ranking_checks']}
+        self.assertEqual(checks['execution_intensity'],'APROVADA')
+        self.assertEqual(checks['holding_horizon'],'REPROVADA')
+        self.assertFalse(row['assessment_passed'])
+
+    def test_provider_profit_with_frequency_warning_retains_evidence_points_not_approval(self):
+        item=candidate();item.pop('deep');item.pop('prefilter30');item['origins']=[]
+        item['prefilter7'].update(trade_count=10000,warnings=['activity_over_daily_limit'])
+        row=rank_candidates([item],CONFIG,NOW)[0]
+        self.assertEqual(row['score'],6)
+        self.assertEqual(row['tier'],'C')
+        self.assertFalse(row['assessment_passed'])
+        self.assertFalse(row['telegram_eligible'])
+        self.assertIn('activity_over_daily_limit',row['warnings'])
 
     def test_provider_pnl_never_replaces_sol_metrics(self):
         item=candidate();item['prefilter7']['pnl_usd']=Decimal('999999999')

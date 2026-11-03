@@ -63,6 +63,8 @@ def public_summary(result, budget, started_at):
         'profile': 'profit-evidence-v1', 'started_at': iso(started_at),
         'counts': _numeric_tree(result.get('counts', result.get('stages', result.get('stage_counts', {})))),
         'rejection_histogram': _numeric_tree(result.get('rejection_histogram', result.get('rejections', {}))),
+        'warning_histogram': _numeric_tree(result.get('warning_histogram',result.get('warnings',{}))),
+        'refinement_histogram': _numeric_tree(result.get('refinement_reasons',{})),
         'budget': {}, 'telegram_sent': 0,
         'check_statuses':_numeric_tree(result.get('check_statuses',{})),
         'ranking_levels': {level: result.get('ranking_levels', {}).get(level, 0)

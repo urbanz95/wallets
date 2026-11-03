@@ -77,13 +77,20 @@ def discover(client, store, config, now):
             row['evidence'].append(evidence)
         candidates.pop(wallet, None)
 
+    def intensity_evidence(trades, scope):
+        daily = Decimal(trades)/7 if trades is not None else None
+        return {'scope': scope, 'days': 7, 'trade_count': trades,
+                'trades_per_day': daily, 'warning_threshold': maximum_daily,
+                'above_warning_threshold': daily > maximum_daily if daily is not None else None,
+                'followability_verified': False}
+
     def add(wallet, evidence, origin=None, tags=()):
         nonlocal ordinal
         if wallet in rejected:
             return
         if wallet not in candidates:
             candidates[wallet] = {
-                'wallet': wallet, 'origins': [], 'tags': [], 'exclusions': [],
+                'wallet': wallet, 'origins': [], 'tags': [], 'exclusions': [], 'warnings': [],
                 'discovery': {'sources': [], 'provider_pnl_usd': None,
                               'pnl_usd': None, 'trade_count': None,
                               'labels_verified': False, 'observed_at': iso(now)},
@@ -95,6 +102,9 @@ def discover(client, store, config, now):
             row['origins'].append(origin)
         row['tags'] = sorted(set(row['tags']) | set(tags))
         row['discovery']['sources'].append(evidence)
+        if evidence.get('intensity', {}).get('above_warning_threshold') is True:
+            if 'activity_over_daily_limit' not in row['warnings']:
+                row['warnings'].append('activity_over_daily_limit')
         if evidence['endpoint'] == GAINERS_ENDPOINT:
             row['discovery']['provider_pnl_usd'] = evidence['metrics'].get(global_metric)
             row['discovery']['provider_sort_metric'] = global_metric
@@ -126,7 +136,8 @@ def discover(client, store, config, now):
         # O mínimo de PnL implícito do contrato é 1000 USD; não inventar min_pnl=0.
         rows = _items(client.request('GET', GAINERS_ENDPOINT, {
             'type': '1W', 'sort_by': global_sort,
-            'max_trade': int(maximum_daily*7), 'offset': 0,
+            # max_trade é opcional no contrato; a intensidade é observada localmente.
+            'offset': 0,
             'limit': min(100, max(1, int(settings.get('discovery_gainers_limit', 100)))),
         }))
         for rank, row in enumerate(rows):
@@ -143,8 +154,7 @@ def discover(client, store, config, now):
                 reject(wallet, ['discovery_metrics_unknown'], evidence); continue
             if trades == 0:
                 reject(wallet, ['discovery_activity_absent'], evidence); continue
-            if Decimal(trades)/7 > maximum_daily:
-                reject(wallet, ['activity_over_daily_limit'], evidence); continue
+            evidence['intensity'] = intensity_evidence(trades, 'provider_wallet_1W')
             if decimal(row.get(global_metric)) <= ZERO:
                 reject(wallet, ['provider_pnl_not_positive'], evidence); continue
             add(wallet, evidence)
@@ -214,8 +224,7 @@ def discover(client, store, config, now):
                 if excluded:
                     reject(wallet, ['excluded_tag:'+tag for tag in excluded], evidence); continue
                 trades = _integer(trader.get('trade'))
-                if trades is not None and Decimal(trades)/7 > maximum_daily:
-                    reject(wallet, ['activity_over_daily_limit'], evidence); continue
+                evidence['intensity'] = intensity_evidence(trades, 'provider_token_7d')
                 last = trader.get('lastTradeUnixTime')
                 if last is not None:
                     try:

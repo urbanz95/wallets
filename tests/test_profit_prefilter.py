@@ -109,13 +109,33 @@ class ProfitPrefilterTests(unittest.TestCase):
         r=prefilter_wallet(Client(value),WALLET,7,{},NOW)
         self.assertIsNone(r['pnl_usd']);self.assertFalse(r['passed'])
 
-    def test_too_many_trades_and_absent_activity_are_rejected_before_deep(self):
-        for days,trades in ((7,701),(30,3001),(7,0)):
+    def test_high_frequency_positive_pnl_is_retained_with_warning_in_both_windows(self):
+        for days,trades in ((7,3500),(30,15000)):
             with self.subTest(days=days,trades=trades):
-                r=prefilter_wallet(Client(response([token(0,10)],trades=trades)),WALLET,days,{},NOW)
-                self.assertFalse(r['passed'])
-        accepted=prefilter_wallet(Client(response([token(0,10)],trades=700)),WALLET,7,{},NOW)
-        self.assertTrue(accepted['passed']);self.assertEqual(accepted['trades_per_day'],100)
+                r=prefilter_wallet(Client(response([token(0,20000)],trades=trades)),WALLET,days,{},NOW)
+                self.assertTrue(r['passed'])
+                self.assertEqual(r['reasons'],[])
+                self.assertEqual(r['warnings'],['activity_over_daily_limit'])
+                signal=r['raw_metrics']['intensity']
+                self.assertEqual(signal['trades_per_day'],500)
+                self.assertEqual(signal['warning_threshold'],100)
+                self.assertTrue(signal['above_warning_threshold'])
+                self.assertFalse(signal['followability_verified'])
+        boundary=prefilter_wallet(Client(response([token(0,10)],trades=700)),WALLET,7,{},NOW)
+        self.assertTrue(boundary['passed']);self.assertEqual(boundary['warnings'],[])
+
+    def test_absent_or_invalid_activity_remains_blocked(self):
+        for trades,reason in ((0,'provider_activity_absent'),(-1,'provider_activity_unknown'),('NaN','provider_activity_unknown')):
+            with self.subTest(trades=trades):
+                r=prefilter_wallet(Client(response([token(0,10)],trades=trades)),WALLET,7,{},NOW)
+                self.assertFalse(r['passed']);self.assertIn(reason,r['reasons'])
+                self.assertEqual(r['warnings'],[])
+
+    def test_high_frequency_does_not_make_negative_pnl_eligible_for_investigation(self):
+        r=prefilter_wallet(Client(response([token(0,-10)],trades=3500)),WALLET,7,{},NOW)
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['reasons'],['provider_pnl_not_positive'])
+        self.assertEqual(r['warnings'],['activity_over_daily_limit'])
 
     def test_duplicate_rows_cannot_inflate_the_sample(self):
         r=prefilter_wallet(Client(response([token(0,10),token(0,10)])),WALLET,7,{},NOW)

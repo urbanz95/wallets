@@ -39,7 +39,7 @@ def prefilter_wallet(client, wallet, days, config, now, *, clock=None):
               'realized_pnl_usd': None, 'unrealized_pnl_usd': None,
               'win_rate': None, 'profit_factor': None, 'top1_share': None,
               'top3_share': None, 'trade_count': None, 'trades_per_day': None,
-              'complete': False, 'passed': False, 'response_received': False, '_future_snapshot': False, 'reasons': [], 'tokens': [],
+              'complete': False, 'passed': False, 'response_received': False, '_future_snapshot': False, 'reasons': [], 'warnings': [], 'tokens': [],
               'raw_metrics': {'method': 'wac', 'position_scope': 'duration_only',
                               'duration': str(days)+'d', 'observed_at': iso(now), 'responses': [],
                               'snapshot_at': None, 'fetched_at': None},
@@ -176,10 +176,21 @@ def prefilter_wallet(client, wallet, days, config, now, *, clock=None):
         result['reasons'].append('provider_activity_unknown')
     elif result['trade_count'] == 0:
         result['reasons'].append('provider_activity_absent')
-    elif result['trades_per_day'] > Decimal(str(settings.get('max_trades_per_day',100))):
-        result['reasons'].append('activity_over_daily_limit')
+    warning_threshold = Decimal(str(settings.get('max_trades_per_day',100)))
+    result['raw_metrics']['intensity'] = {
+        'scope': 'provider_wallet_duration', 'days': days,
+        'trade_count': result['trade_count'], 'trades_per_day': result['trades_per_day'],
+        'warning_threshold': warning_threshold,
+        'above_warning_threshold': (result['trades_per_day'] > warning_threshold
+                                   if result['trades_per_day'] is not None else None),
+        'followability_verified': False,
+    }
+    if result['raw_metrics']['intensity']['above_warning_threshold'] is True:
+        result['warnings'].append('activity_over_daily_limit')
+        result['limitations'].append('Frequência reportada acima do limiar de investigação; não prova automatização nem impossibilidade de acompanhamento.')
     if result['tokens_count'] < max(1,int(settings.get('prefilter_min_tokens',1))):
         result['reasons'].append('prefilter_sample_insufficient')
+    # Frequência é um aviso para investigar, não uma reprovação económica.
     # Os indicadores adicionais ordenam o pré-filtro. O motor de evidência e a
     # contabilidade própria decidem depois; um campo desconhecido não é um passe.
     result['passed'] = not result['reasons'] and not result['_future_snapshot']

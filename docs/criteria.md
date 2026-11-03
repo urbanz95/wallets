@@ -76,6 +76,8 @@ No máximo são tentadas 5 mensagens por execução. Uma carteira já enviada s�
 
 ## Perfil experimental de lucro e evidência — `2026-10-30.profit.1`
 
+As revisões seguintes preservam o histórico de decisões. A revisão vigente é `2026-11-03.profit.5`, descrita no fim; substitui especificamente o veto por frequência e o orçamento de paginação indicados na versão inicial.
+
 Esta secção aplica-se exclusivamente a `config.profit.toml` e ao novo ranking experimental. As definições anteriores mantêm-se nos respetivos perfis. A experiência procura candidatas recentes com evidência de resultados e um horizonte observável de acompanhamento; devolve até três, mesmo quando só existe evidência parcial. **A, B e C são níveis de evidência, não aprovação integral, probabilidade de lucro ou autorização para Telegram. O Telegram permanece desligado neste perfil.** Os endereços ficam apenas no estado cifrado e no Excel privado; o resumo público contém contagens por estágio e um histograma de motivos.
 
 ### População, janelas e pré-filtro
@@ -178,3 +180,30 @@ A recolha profunda admite seis páginas Helius por carteira, até dois pedidos a
 O suporte `pump_fees.get_fees` é restrito ao discriminador, argumentos e CPI de um swap Pump/PumpSwap com contas correspondentes. Não autoriza claims/admin ou outros métodos. Parsed Events é evidência adicional: são reconciliados identidade, data, slot, taxa, beneficiário, instrução raiz e saldos. Os montantes do resumo do fornecedor não são assumidos como montantes líquidos da carteira. Rotas que não cumpram essa reconciliação continuam desconhecidas.
 
 A origem comprimida dos últimos35dias fica disponível para reinterpretação. Interpretações novas são acrescentadas com versão/hash, sem alterar fotografias ou recibos antigos. A segunda cópia bruta do recolhedor só é removida depois da persistência autenticada. A recuperação de origens legadas podadas é limitada pelos batches Parsed Events; lacunas mantêm NÃO VERIFICADO. Limites de espaço continuam a interromper novas reservas.
+
+
+### Revisão `2026-11-03.profit.5`: investigar antes de concluir sobre acompanhamento
+
+A revisão corrige uma confusão entre seleção económica e avaliação comportamental. O pedido de descoberta usava `max_trade=700`, excluindo logo na origem carteiras com mais de 100 operações/dia em média. O pré-filtro repetia esse veto sem conhecer a duração das posições. O contrato oficial permite omitir esse filtro opcional; o pedido deixa de o enviar. Uma frequência elevada, por si só, não demonstra que cada decisão exija reação imediata.
+
+O limiar de 100 operações/dia permanece configurado como **aviso** na descoberta e no pré-filtro 7d/30d. Preservam-se janela, contagem, média e limiar na evidência. PnL não positivo, dados incoerentes, atividade ausente, informação futura e etiquetas excluídas continuam a bloquear a investigação correspondente. Um resumo favorável apenas autoriza prosseguir dentro do orçamento; não aprova a carteira.
+
+Na análise profunda, `execution_intensity` combina os seguintes indicadores:
+
+| Indicador | Limiar mantido | Interpretação |
+|---|---|---|
+| Frequência | Mais de 100 operações/dia | Intensidade média; não prova atividade contínua ou bot |
+| Fechos rápidos | Fração superior a 20% | Posições fechadas em até 60 segundos, segundo a métrica própria |
+| Manutenção curta | Mediana inferior a 300 segundos | Horizonte observado potencialmente incompatível com acompanhamento |
+
+`min_execution_signals=2` exige pelo menos dois indicadores para reprovar esse check; só são aceites os inteiros 2 ou 3. Estes indicadores podem estar correlacionados e a sua contagem é uma heurística operacional, não provas estatisticamente independentes nem confirmação de automatização. É necessária cobertura recente completa, integridade, amostra e custos suficientes, além de todas as medições; caso contrário o check permanece **INDETERMINADO**. A frequência isolada permanece um aviso. O requisito separado `holding_horizon` mantém mediana ≥300 segundos; não se autoriza acompanhamento de posições demasiado curtas apenas por faltar um segundo sinal de automatização. A ausência de indícios não confirma identidade humana.
+
+O refinamento de PnL mantém a primeira consulta barata e tenta completar páginas de poucas candidatas prioritárias. O perfil automático reserva no máximo 120 CU, equivalentes a quatro páginas planeadas no total, incluindo a primeira página mesmo se estiver em cache. O pedido manual, sem descoberta, admite 300 CU e até dez páginas planeadas. O máximo é duas carteiras por passagem e dez páginas por carteira. Estimativas que não cabem são adiadas sem pedidos. Respostas parciais, erros ou mudanças entre páginas conservam o pré-filtro inicial e deixam PF/concentração por token desconhecidos. Só uma resposta completa e válida substitui o resumo de triagem. Se essa resposta demonstrar PnL não positivo, atualiza o pré-filtro corrente e impede avançar com base no valor positivo anterior; a triagem inicial permanece guardada para auditoria. Não se juntam páginas de execuções diferentes.
+
+Para criar essa reserva sem subir o teto gratuito, a triagem automática passa de 13 para nove carteiras: `230 + 9×30 + 120 + 3×30 + 6×12 = 782 CU`, abaixo de 800. Helius mantém 1 720 créditos planeados para duas análises. São tetos; só se reserva o trabalho planeado e só se reembolsa o não tentado. Não se usa um reembolso como autorização implícita para exceder as reservas totais da execução. Este desenho troca algumas primeiras páginas por informação mais completa das candidatas prioritárias; não altera um critério de rentabilidade.
+
+A fila acumula as origens por token com datas e expiração de sete dias. Preserva a rotação, a prioridade dos pedidos manuais e até duas pendências; nos empates usa repetição entre tokens e PnL recente válido. Não se dá prioridade a PnL antigo, futuro ou inválido nem se renova uma origem apenas porque a carteira foi selecionada de novo.
+
+Mantêm-se os limiares financeiros, incluindo **40 tokens conhecidos**, **PF ≥1,3**, resultados positivos sem o melhor e sem os três melhores tokens, concentração e os custos/perdas abertos. Não foram ajustados para fazer passar carteiras já observadas. Os relatórios separam sinal económico do fornecedor, avisos e possibilidade de acompanhamento, mantendo NÃO VERIFICADO quando faltam dados. A pontuação organiza evidência; não é uma classificação absoluta da qualidade da carteira. A política estrita original de Telegram e a main permanecem inalteradas.
+
+Esta secção descreve critérios implementados e testáveis. Não afirma sucesso em dados reais desta revisão; os resultados autenticados devem ficar datados separadamente em [profit-validation.md](profit-validation.md).
