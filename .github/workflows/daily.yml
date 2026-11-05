@@ -1,8 +1,7 @@
 name: Análise diária Birdeye e Helius gratuitas
 on:
-  schedule:
-    # UTC. Lisboa: 07:17 no inverno, 08:17 no verão. GitHub pode atrasar a execução.
-    - cron: '17 7 * * *'
+  # Rotina diária suspensa para evitar consumo de quotas e execuções não utilizadas.
+  # A execução manual continua disponível.
   workflow_dispatch:
     inputs:
       initialize_state:
